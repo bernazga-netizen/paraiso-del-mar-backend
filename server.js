@@ -243,7 +243,7 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`\n${'='.repeat(50)}`);
-  console.log(`🚀 SERVIDOR PARAÍSO DEL MAR EN LÍNEA`);
+  console.log(`🚀 SERVIDOR PARAÍSO DEL MAR EN LÍNEA (v2)`);
   console.log(`${'='.repeat(50)}`);
   console.log(`\n📍 Servidor: http://localhost:${PORT}`);
   console.log(`📊 API Health: http://localhost:${PORT}/health`);
