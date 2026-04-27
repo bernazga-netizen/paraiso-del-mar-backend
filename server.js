@@ -251,5 +251,31 @@ server.listen(PORT, () => {
   console.log(`✓ WebSockets activos`);
   console.log(`✓ CORS habilitado\n`);
 });
+// ============================================
+// 🔵 RUTA: Crear datos de prueba
+// ============================================
+app.get('/api/test/crear-muestra', async (req, res) => {
+  try {
+    const accesos = ['Muelle Principal', 'Base 4', 'Base 1'];
+    const tipos = ['Dueño', 'Rentista', 'Golfista', 'Restaurante', 'Proveedor', 'Empleado', 'Administrativo'];
+    const hoy = new Date().toISOString().split('T')[0];
 
+    for (let i = 0; i < 10; i++) {
+      const acceso = accesos[Math.floor(Math.random() * accesos.length)];
+      const tipo = tipos[Math.floor(Math.random() * tipos.length)];
+      const cantidad = Math.floor(Math.random() * 5) + 1;
+      const hora = `${String(Math.floor(Math.random() * 24)).padStart(2, '0')}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}:00`;
+
+      await pool.query(
+        `INSERT INTO registros (fecha, hora, acceso, tipo_persona, cantidad, usuario_captura, timestamp) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [hoy, hora, acceso, tipo, cantidad, 'prueba', Date.now()]
+      );
+    }
+
+    res.json({ success: true, mensaje: '✓ 10 registros de prueba creados' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 module.exports = { app, pool, io };
