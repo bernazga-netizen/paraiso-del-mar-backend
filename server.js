@@ -31,18 +31,12 @@ app.get('/api/test/crear-muestra', async (req, res) => {
     const accesos = ['Muelle Principal', 'Base 4', 'Base 1'];
     const tipos = ['Dueño', 'Rentista', 'Golfista', 'Restaurante', 'Proveedor', 'Empleado', 'Administrativo'];
     const hoy = new Date().toISOString().split('T')[0];
-
     for (let i = 0; i < 10; i++) {
       const acceso = accesos[Math.floor(Math.random() * accesos.length)];
       const tipo = tipos[Math.floor(Math.random() * tipos.length)];
       const cantidad = Math.floor(Math.random() * 5) + 1;
       const hora = `${String(Math.floor(Math.random() * 24)).padStart(2, '0')}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}:00`;
-
-      await pool.query(
-        `INSERT INTO registros (fecha, hora, acceso, tipo_persona, cantidad, usuario_captura, timestamp) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [hoy, hora, acceso, tipo, cantidad, 'prueba', Date.now()]
-      );
+      await pool.query('INSERT INTO registros (fecha, hora, acceso, tipo_persona, cantidad, usuario_captura, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7)', [hoy, hora, acceso, tipo, cantidad, 'prueba', Date.now()]);
     }
     res.json({ success: true, mensaje: '10 registros de prueba creados' });
   } catch (error) {
@@ -50,81 +44,9 @@ app.get('/api/test/crear-muestra', async (req, res) => {
   }
 });
 
-app.post('/api/registros', async (req, res) => {
-  try {
-    const { fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura } = req.body;
-    if (tipo_persona === 'Proveedor') {
-      const [horas] = hora.split(':');
-      if (parseInt(horas) > 16) {
-        return res.status(400).json({ error: 'Proveedores no pueden ingresar después de 16:00' });
-      }
-    }
-    const resultado = await pool.query(
-      `INSERT INTO registros (fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura, timestamp) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [fecha, hora, acceso, tipo_persona, cantidad, embarcacion || null, notas || '', usuario_captura, Date.now()]
-    );
-    io.emit('nuevoRegistro', resultado.rows[0]);
-    res.json({ success: true, mensaje: `${cantidad} ${tipo_persona}(s) registrado(s)`, data: resultado.rows[0] });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/estadisticas/:fecha', async (req, res) => {
-  try {
-    const { fecha } = req.params;
-    const porAcceso = await pool.query(
-      `SELECT acceso, SUM(cantidad)::INT as total FROM registros WHERE fecha = $1 GROUP BY acceso ORDER BY total DESC`, [fecha]
-    );
-    const porTipo = await pool.query(
-      `SELECT tipo_persona, SUM(cantidad)::INT as total FROM registros WHERE fecha = $1 GROUP BY tipo_persona ORDER BY total DESC`, [fecha]
-    );
-    const totalGeneral = await pool.query(
-      `SELECT SUM(cantidad)::INT as total FROM registros WHERE fecha = $1`, [fecha]
-    );
-    res.json({
-      fecha,
-      total: totalGeneral.rows[0]?.total || 0,
-      porAcceso: porAcceso.rows,
-      porTipo: porTipo.rows
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/registros', async (req, res) => {
-  try {
-    const { fecha, acceso, tipo, dias } = req.query;
-    let query = 'SELECT * FROM registros WHERE 1=1';
-    let params = [];
-    if (fecha) {
-      query += ` AND fecha = $${params.length + 1}`;
-      params.push(fecha);
-    }
-    if (acceso) {
-      query += ` AND acceso = $${params.length + 1}`;
-      params.push(acceso);
-    }
-    if (tipo) {
-      query += ` AND tipo_persona = $${params.length + 1}`;
-      params.push(tipo);
-    }
-    if (dias) {
-      query += ` AND fecha >= CURRENT_DATE - INTERVAL '${dias} days'`;
-    }
-    query += ' ORDER BY created_at DESC LIMIT 1000';
-    const resultado = await pool.query(query, params);
-    res.json(resultado.rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`SERVIDOR PARAÍSO DEL MAR EN LÍNEA - Puerto: ${PORT}`);
+  console.log(`Servidor en puerto ${PORT}`);
 });
 
 module.exports = { app, pool, io };
