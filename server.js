@@ -94,6 +94,34 @@ app.get('/api/estadisticas/:fecha', async (req, res) => {
   }
 });
 
+app.get('/api/registros', async (req, res) => {
+  try {
+    const { fecha, acceso, tipo, dias } = req.query;
+    let query = 'SELECT * FROM registros WHERE 1=1';
+    let params = [];
+    if (fecha) {
+      query += ` AND fecha = $${params.length + 1}`;
+      params.push(fecha);
+    }
+    if (acceso) {
+      query += ` AND acceso = $${params.length + 1}`;
+      params.push(acceso);
+    }
+    if (tipo) {
+      query += ` AND tipo_persona = $${params.length + 1}`;
+      params.push(tipo);
+    }
+    if (dias) {
+      query += ` AND fecha >= CURRENT_DATE - INTERVAL '${dias} days'`;
+    }
+    query += ' ORDER BY created_at DESC LIMIT 1000';
+    const resultado = await pool.query(query, params);
+    res.json(resultado.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`SERVIDOR PARAÍSO DEL MAR EN LÍNEA - Puerto: ${PORT}`);
