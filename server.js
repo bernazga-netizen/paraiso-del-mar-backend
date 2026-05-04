@@ -1,240 +1,541 @@
-const express = require('express');
-const cors = require('cors');
-const { Pool } = require('pg');
-const http = require('http');
-const socketIo = require('socket.io');
-require('dotenv').config();
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Paraíso del Mar</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #667eea; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header { background: #1a237e; color: white; padding: 30px; text-align: center; border-radius: 10px; margin-bottom: 20px; }
+        .header h1 { font-size: 32px; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab { background: white; color: #1a237e; padding: 15px 30px; border-radius: 8px; cursor: pointer; font-weight: bold; border: 2px solid #1a237e; }
+        .tab.active { background: #1a237e; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .controles { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .controles label { font-weight: bold; color: #1a237e; font-size: 14px; }
+        .controles input, .controles select { padding: 10px; border: 2px solid #1a237e; border-radius: 5px; font-size: 14px; }
+        .controles button { background: #1a237e; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        .controles button:hover { background: #0d47a1; }
+        .btn-excel { background: #4caf50; }
+        .btn-excel:hover { background: #388e3c; }
+        .btn-limpiar { background: #ff9800; }
+        .btn-limpiar:hover { background: #f57c00; }
+        .filtros-section { background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 2px solid #1a237e; }
+        .filtros-title { font-weight: bold; color: #1a237e; margin-bottom: 10px; font-size: 16px; }
+        .filtros-row { display: flex; gap: 15px; flex-wrap: wrap; align-items: center; }
+        .filtro-group { display: flex; flex-direction: column; gap: 5px; }
+        .kpi-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .kpi { background: white; padding: 20px; border-radius: 8px; text-align: center; }
+        .kpi-numero { font-size: 36px; font-weight: bold; color: #1a237e; }
+        .kpi-label { font-size: 12px; color: #666; margin-top: 5px; }
+        .tabla { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .tabla h2 { color: #1a237e; margin-bottom: 15px; border-bottom: 2px solid #1a237e; padding-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f5f5f5; padding: 12px; text-align: left; font-weight: bold; border-bottom: 2px solid #ddd; font-size: 13px; }
+        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+        .error { background: #f44336; color: white; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #1a237e; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .grafica { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        canvas { max-height: 300px; }
+        .badge-filtro { background: #1a237e; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; display: inline-block; margin: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 PARAÍSO DEL MAR</h1>
+            <p>Dashboard de Control</p>
+        </div>
 
-const app = express();
-const server = http.createServer(app);
-const io = socketIo(server, { cors: { origin: '*' } });
+        <div class="tabs">
+            <div class="tab active" onclick="cambiarTab('estadisticas')">📈 ESTADÍSTICAS</div>
+            <div class="tab" onclick="cambiarTab('auditoria')">📋 AUDITORÍA</div>
+        </div>
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
+        <!-- TAB: ESTADÍSTICAS -->
+        <div id="tab-estadisticas" class="tab-content active">
+            <div class="controles">
+                <label>📅 Fecha:</label>
+                <input type="date" id="fechaInput" value="">
+                <button onclick="cargar()">🔄 ACTUALIZAR</button>
+                <button class="btn-excel" onclick="exportarExcel()">📥 EXPORTAR EXCEL</button>
+            </div>
 
-app.use(cors());
-app.use(express.json());
+            <div class="filtros-section">
+                <div class="filtros-title">🔍 FILTROS AVANZADOS</div>
+                <div class="filtros-row">
+                    <div class="filtro-group">
+                        <label>Tipo de Persona:</label>
+                        <select id="filtroTipo">
+                            <option value="">Todos</option>
+                            <option value="Dueño">Dueño</option>
+                            <option value="Rentista">Rentista</option>
+                            <option value="Golfista">Golfista</option>
+                            <option value="Restaurante">Restaurante</option>
+                            <option value="Proveedor">Proveedor</option>
+                            <option value="Empleado">Empleado</option>
+                            <option value="Administrativo">Administrativo</option>
+                        </select>
+                    </div>
+                    <div class="filtro-group">
+                        <label>Acceso:</label>
+                        <select id="filtroAcceso">
+                            <option value="">Todos</option>
+                            <option value="Muelle Principal">Muelle Principal</option>
+                            <option value="Base 4">Base 4</option>
+                            <option value="Base 1">Base 1</option>
+                        </select>
+                    </div>
+                    <div class="filtro-group">
+                        <label>Hora Desde:</label>
+                        <input type="time" id="filtroHoraDesde" value="">
+                    </div>
+                    <div class="filtro-group">
+                        <label>Hora Hasta:</label>
+                        <input type="time" id="filtroHoraHasta" value="">
+                    </div>
+                    <div class="filtro-group">
+                        <label>&nbsp;</label>
+                        <button onclick="aplicarFiltros()">✓ APLICAR</button>
+                    </div>
+                    <div class="filtro-group">
+                        <label>&nbsp;</label>
+                        <button class="btn-limpiar" onclick="limpiarFiltros()">✕ LIMPIAR</button>
+                    </div>
+                </div>
+                <div id="filtrosActivos" style="margin-top: 10px;"></div>
+            </div>
 
-app.get('/health', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT NOW()');
-    res.json({ status: 'OK', database: 'Connected', timestamp: result.rows[0].now });
-  } catch (error) {
-    res.status(500).json({ status: 'ERROR', error: error.message });
-  }
-});
+            <div id="contenido">
+                <p style="text-align: center; color: white; font-size: 18px;">
+                    <span class="spinner"></span> Cargando...
+                </p>
+            </div>
+        </div>
 
-app.get('/api/test/crear-muestra', async (req, res) => {
-  try {
-    const accesos = ['Muelle Principal', 'Base 4', 'Base 1'];
-    const tipos = ['Dueño', 'Rentista', 'Golfista', 'Restaurante', 'Proveedor', 'Empleado', 'Administrativo'];
-    const hoy = new Date().toISOString().split('T')[0];
-    
-    for (let i = 0; i < 10; i++) {
-      const acceso = accesos[Math.floor(Math.random() * accesos.length)];
-      const tipo = tipos[Math.floor(Math.random() * tipos.length)];
-      const cantidad = Math.floor(Math.random() * 5) + 1;
-      const hora = `${String(Math.floor(Math.random() * 24)).padStart(2, '0')}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}:00`;
-      
-      await pool.query(
-        'INSERT INTO registros (fecha, hora, acceso, tipo_persona, cantidad, usuario_captura, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-        [hoy, hora, acceso, tipo, cantidad, 'prueba', Date.now()]
-      );
-    }
-    
-    res.json({ success: true, mensaje: '10 registros de prueba creados' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+        <!-- TAB: AUDITORÍA -->
+        <div id="tab-auditoria" class="tab-content">
+            <div class="controles">
+                <label>📅 Desde:</label>
+                <input type="date" id="auditoriaFechaInicio" value="">
+                <label>📅 Hasta:</label>
+                <input type="date" id="auditoriaFechaFin" value="">
+                <button onclick="cargarAuditoria()">🔄 BUSCAR</button>
+                <button class="btn-excel" onclick="exportarAuditoriaExcel()">📥 EXPORTAR</button>
+            </div>
 
-// Guardar registro con validación y auditoría
-app.post('/api/registros', async (req, res) => {
-    try {
-        const { fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura } = req.body;
+            <div class="filtros-section">
+                <div class="filtros-title">🔍 FILTROS DE AUDITORÍA</div>
+                <div class="filtros-row">
+                    <div class="filtro-group">
+                        <label>Usuario:</label>
+                        <input type="text" id="auditoriaUsuario" placeholder="Nombre del usuario">
+                    </div>
+                    <div class="filtro-group">
+                        <label>Tipo:</label>
+                        <select id="auditoriaTipo">
+                            <option value="">Todos</option>
+                            <option value="Dueño">Dueño</option>
+                            <option value="Rentista">Rentista</option>
+                            <option value="Golfista">Golfista</option>
+                            <option value="Restaurante">Restaurante</option>
+                            <option value="Proveedor">Proveedor</option>
+                            <option value="Empleado">Empleado</option>
+                            <option value="Administrativo">Administrativo</option>
+                        </select>
+                    </div>
+                    <div class="filtro-group">
+                        <label>Acceso:</label>
+                        <select id="auditoriaAcceso">
+                            <option value="">Todos</option>
+                            <option value="Muelle Principal">Muelle Principal</option>
+                            <option value="Base 4">Base 4</option>
+                            <option value="Base 1">Base 1</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
 
-        // Validar que proveedores no ingresen después de las 4pm
-        if (tipo_persona === 'Proveedor') {
-            const horaNum = parseInt(hora.split(':')[0]);
-            if (horaNum >= 16) {
-                return res.status(400).json({ 
-                    error: 'Los proveedores no pueden ingresar después de las 4:00 PM' 
-                });
+            <div id="contenidoAuditoria">
+                <p style="text-align: center; color: white; font-size: 18px;">
+                    Selecciona un rango de fechas y presiona BUSCAR
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script>
+       const API = 'https://paraiso-del-mar-backend.onrender.com';
+       let datosActuales = null;
+       let datosFiltrados = null;
+       let chartInstance = null;
+       let datosAuditoria = [];
+       
+       // Establecer fechas actuales
+       const hoy = new Date().toISOString().split('T')[0];
+       document.getElementById('fechaInput').value = hoy;
+       document.getElementById('auditoriaFechaFin').value = hoy;
+       
+       const hace7dias = new Date();
+       hace7dias.setDate(hace7dias.getDate() - 7);
+       document.getElementById('auditoriaFechaInicio').value = hace7dias.toISOString().split('T')[0];
+
+       function cambiarTab(tab) {
+           document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+           document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+           
+           if (tab === 'estadisticas') {
+               document.querySelectorAll('.tab')[0].classList.add('active');
+               document.getElementById('tab-estadisticas').classList.add('active');
+           } else {
+               document.querySelectorAll('.tab')[1].classList.add('active');
+               document.getElementById('tab-auditoria').classList.add('active');
+           }
+       }
+        
+       async function cargar() {
+            try {
+                const fecha = document.getElementById('fechaInput').value;
+                const res = await fetch(`${API}/api/estadisticas/${fecha}`);
+                const data = await res.json();
+                datosActuales = data;
+                datosFiltrados = data;
+                aplicarFiltros();
+            } catch (e) {
+                document.getElementById('contenido').innerHTML = `<div class="error">❌ Error: No se puede conectar a ${API}</div>`;
             }
         }
 
-        const timestamp = Date.now();
+        function aplicarFiltros() {
+            if (!datosActuales) return;
 
-        // Insertar en la tabla principal (registros)
-        const resultRegistro = await pool.query(
-            'INSERT INTO registros (fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
-            [fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura, timestamp]
-        );
+            const filtroTipo = document.getElementById('filtroTipo').value;
+            const filtroAcceso = document.getElementById('filtroAcceso').value;
+            const filtroHoraDesde = document.getElementById('filtroHoraDesde').value;
+            const filtroHoraHasta = document.getElementById('filtroHoraHasta').value;
 
-        // Insertar en la tabla de auditoría (histórico permanente)
-        await pool.query(
-            'INSERT INTO auditoria (fecha, hora, acceso, tipo_persona, cantidad, usuario_captura) VALUES ($1, $2, $3, $4, $5, $6)',
-            [fecha, hora, acceso, tipo_persona, cantidad, usuario_captura]
-        );
+            let badgesHTML = '';
+            if (filtroTipo) badgesHTML += `<span class="badge-filtro">Tipo: ${filtroTipo}</span>`;
+            if (filtroAcceso) badgesHTML += `<span class="badge-filtro">Acceso: ${filtroAcceso}</span>`;
+            if (filtroHoraDesde) badgesHTML += `<span class="badge-filtro">Desde: ${filtroHoraDesde}</span>`;
+            if (filtroHoraHasta) badgesHTML += `<span class="badge-filtro">Hasta: ${filtroHoraHasta}</span>`;
+            document.getElementById('filtrosActivos').innerHTML = badgesHTML;
 
-        // Emitir evento de actualización en tiempo real
-        io.emit('nuevoRegistro', { 
-            fecha, 
-            hora, 
-            acceso, 
-            tipo_persona, 
-            cantidad 
-        });
+            datosFiltrados = JSON.parse(JSON.stringify(datosActuales));
 
-        res.json({ 
-            mensaje: 'Registro guardado exitosamente',
-            id: resultRegistro.rows[0].id
-        });
-    } catch (error) {
-        console.error('Error al guardar registro:', error);
-        res.status(500).json({ error: 'Error al guardar el registro' });
-    }
-});
+            if (filtroTipo || filtroAcceso) {
+                if (datosFiltrados.detalladoPorAccesoYTipo) {
+                    datosFiltrados.detalladoPorAccesoYTipo = datosFiltrados.detalladoPorAccesoYTipo.filter(d => {
+                        let match = true;
+                        if (filtroTipo && d.tipo_persona !== filtroTipo) match = false;
+                        if (filtroAcceso && d.acceso !== filtroAcceso) match = false;
+                        return match;
+                    });
 
-// Obtener estadísticas del día
-app.get('/api/estadisticas/:fecha', async (req, res) => {
-    try {
-        const { fecha } = req.params;
+                    const tiposMap = {};
+                    datosFiltrados.detalladoPorAccesoYTipo.forEach(d => {
+                        if (!tiposMap[d.tipo_persona]) {
+                            tiposMap[d.tipo_persona] = 0;
+                        }
+                        tiposMap[d.tipo_persona] += parseInt(d.total);
+                    });
+                    datosFiltrados.porTipo = Object.keys(tiposMap).map(tipo => ({
+                        tipo_persona: tipo,
+                        total: tiposMap[tipo]
+                    }));
 
-        const total = await pool.query(
-            'SELECT COALESCE(SUM(cantidad), 0) as total FROM registros WHERE fecha = $1',
-            [fecha]
-        );
+                    const accesosMap = {};
+                    datosFiltrados.detalladoPorAccesoYTipo.forEach(d => {
+                        if (!accesosMap[d.acceso]) {
+                            accesosMap[d.acceso] = 0;
+                        }
+                        accesosMap[d.acceso] += parseInt(d.total);
+                    });
+                    datosFiltrados.porAcceso = Object.keys(accesosMap).map(acceso => ({
+                        acceso: acceso,
+                        total: accesosMap[acceso]
+                    }));
+                }
+            }
 
-        const porAcceso = await pool.query(
-            'SELECT acceso, SUM(cantidad) as total FROM registros WHERE fecha = $1 GROUP BY acceso ORDER BY acceso',
-            [fecha]
-        );
+            if ((filtroHoraDesde || filtroHoraHasta) && datosFiltrados.porHora) {
+                datosFiltrados.porHora = datosFiltrados.porHora.filter(h => {
+                    const hora = h.hora.substring(0, 5);
+                    let match = true;
+                    if (filtroHoraDesde && hora < filtroHoraDesde) match = false;
+                    if (filtroHoraHasta && hora > filtroHoraHasta) match = false;
+                    return match;
+                });
+            }
 
-        const porTipo = await pool.query(
-            'SELECT tipo_persona, SUM(cantidad) as total FROM registros WHERE fecha = $1 GROUP BY tipo_persona ORDER BY total DESC',
-            [fecha]
-        );
+            let totalFiltrado = 0;
+            if (datosFiltrados.detalladoPorAccesoYTipo) {
+                totalFiltrado = datosFiltrados.detalladoPorAccesoYTipo.reduce((sum, d) => sum + parseInt(d.total), 0);
+            } else {
+                totalFiltrado = datosFiltrados.total;
+            }
+            datosFiltrados.total = totalFiltrado;
 
-        const porHora = await pool.query(
-            'SELECT hora, SUM(cantidad) as total FROM registros WHERE fecha = $1 GROUP BY hora ORDER BY hora',
-            [fecha]
-        );
-
-        const detalladoPorAccesoYTipo = await pool.query(
-            'SELECT acceso, tipo_persona, SUM(cantidad) as total FROM registros WHERE fecha = $1 GROUP BY acceso, tipo_persona ORDER BY acceso, tipo_persona',
-            [fecha]
-        );
-
-        res.json({
-            total: parseInt(total.rows[0].total),
-            porAcceso: porAcceso.rows,
-            porTipo: porTipo.rows,
-            porHora: porHora.rows,
-            detalladoPorAccesoYTipo: detalladoPorAccesoYTipo.rows
-        });
-    } catch (error) {
-        console.error('Error al obtener estadísticas:', error);
-        res.status(500).json({ error: 'Error al obtener estadísticas' });
-    }
-});
-
-// Obtener registros históricos con filtros
-app.get('/api/registros', async (req, res) => {
-    try {
-        const { fecha, acceso, tipo_persona } = req.query;
-        let query = 'SELECT * FROM registros WHERE 1=1';
-        const params = [];
-        let paramCount = 1;
-
-        if (fecha) {
-            query += ` AND fecha = $${paramCount}`;
-            params.push(fecha);
-            paramCount++;
+            mostrarDatos();
         }
 
-        if (acceso) {
-            query += ` AND acceso = $${paramCount}`;
-            params.push(acceso);
-            paramCount++;
+        function limpiarFiltros() {
+            document.getElementById('filtroTipo').value = '';
+            document.getElementById('filtroAcceso').value = '';
+            document.getElementById('filtroHoraDesde').value = '';
+            document.getElementById('filtroHoraHasta').value = '';
+            document.getElementById('filtrosActivos').innerHTML = '';
+            datosFiltrados = datosActuales;
+            mostrarDatos();
         }
 
-        if (tipo_persona) {
-            query += ` AND tipo_persona = $${paramCount}`;
-            params.push(tipo_persona);
-            paramCount++;
+        function mostrarDatos() {
+            const data = datosFiltrados;
+            
+            let html = '<div class="kpi-container">';
+            html += `<div class="kpi"><div class="kpi-numero">${data.total}</div><div class="kpi-label">TOTAL</div></div>`;
+            
+            if (data.detalladoPorAccesoYTipo && data.detalladoPorAccesoYTipo.length > 0) {
+                const accesos = ['Muelle Principal', 'Base 4', 'Base 1'];
+                accesos.forEach(nombreAcceso => {
+                    const totalAcceso = data.detalladoPorAccesoYTipo
+                        .filter(d => d.acceso === nombreAcceso)
+                        .reduce((sum, d) => sum + parseInt(d.total), 0);
+                    if (totalAcceso > 0) {
+                        html += `<div class="kpi"><div class="kpi-numero">${totalAcceso}</div><div class="kpi-label">${nombreAcceso}</div></div>`;
+                    }
+                });
+            } else if (data.porAcceso) {
+                data.porAcceso.forEach(a => {
+                    html += `<div class="kpi"><div class="kpi-numero">${a.total}</div><div class="kpi-label">${a.acceso}</div></div>`;
+                });
+            }
+            html += '</div>';
+            
+            if (data.porHora && data.porHora.length > 0) {
+                html += '<div class="grafica"><h2>📈 Ingresos por Hora</h2><canvas id="chartHora"></canvas></div>';
+            }
+            
+            if (data.porTipo && data.porTipo.length > 0) {
+                html += '<div class="tabla"><h2>Por Tipo de Persona</h2><table><tr><th>Tipo</th><th style="text-align: right;">Cantidad</th></tr>';
+                data.porTipo.forEach(t => {
+                    html += `<tr><td>${t.tipo_persona}</td><td style="text-align: right;">${t.total}</td></tr>`;
+                });
+                html += '</table></div>';
+            }
+            
+            if (data.porAcceso && data.porAcceso.length > 0) {
+                html += '<div class="tabla"><h2>Por Acceso</h2><table><tr><th>Acceso</th><th style="text-align: right;">Cantidad</th></tr>';
+                data.porAcceso.forEach(a => {
+                    html += `<tr><td>${a.acceso}</td><td style="text-align: right;">${a.total}</td></tr>`;
+                });
+                html += '</table></div>';
+            }
+            
+            if (data.detalladoPorAccesoYTipo && data.detalladoPorAccesoYTipo.length > 0) {
+                html += '<div class="tabla"><h2>Detalle por Acceso y Tipo</h2><table><tr><th>Acceso</th><th>Tipo</th><th style="text-align: right;">Cantidad</th></tr>';
+                data.detalladoPorAccesoYTipo.forEach(d => {
+                    html += `<tr><td>${d.acceso}</td><td>${d.tipo_persona}</td><td style="text-align: right;">${d.total}</td></tr>`;
+                });
+                html += '</table></div>';
+            }
+            
+            document.getElementById('contenido').innerHTML = html;
+            
+            if (data.porHora && data.porHora.length > 0) {
+                setTimeout(() => crearGrafica(data.porHora), 100);
+            }
         }
 
-        query += ' ORDER BY fecha DESC, hora DESC LIMIT 100';
-
-        const result = await pool.query(query, params);
-        res.json(result.rows);
-    } catch (error) {
-        console.error('Error al obtener registros:', error);
-        res.status(500).json({ error: 'Error al obtener registros' });
-    }
-});
-
-// Obtener auditoría con filtros
-app.get('/api/auditoria', async (req, res) => {
-    try {
-        const { fecha_inicio, fecha_fin, acceso, tipo_persona, usuario_captura } = req.query;
-        let query = 'SELECT * FROM auditoria WHERE 1=1';
-        const params = [];
-        let paramCount = 1;
-
-        if (fecha_inicio) {
-            query += ` AND fecha >= $${paramCount}`;
-            params.push(fecha_inicio);
-            paramCount++;
+        function crearGrafica(porHora) {
+            const ctx = document.getElementById('chartHora');
+            if (!ctx) return;
+            
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+            
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: porHora.map(h => h.hora.substring(0, 5)),
+                    datasets: [{
+                        label: 'Ingresos',
+                        data: porHora.map(h => h.total),
+                        borderColor: '#1a237e',
+                        backgroundColor: 'rgba(26, 35, 126, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
         }
 
-        if (fecha_fin) {
-            query += ` AND fecha <= $${paramCount}`;
-            params.push(fecha_fin);
-            paramCount++;
+        function exportarExcel() {
+            if (!datosFiltrados) {
+                alert('No hay datos para exportar');
+                return;
+            }
+
+            const fecha = document.getElementById('fechaInput').value;
+            const wb = XLSX.utils.book_new();
+
+            const resumen = [
+                ['PARAÍSO DEL MAR - Reporte de Ingresos'],
+                ['Fecha:', fecha],
+                ['Total General:', datosFiltrados.total],
+                [''],
+                ['Por Acceso'],
+                ['Acceso', 'Cantidad']
+            ];
+            if (datosFiltrados.porAcceso) {
+                datosFiltrados.porAcceso.forEach(a => {
+                    resumen.push([a.acceso, a.total]);
+                });
+            }
+            resumen.push(['']);
+            resumen.push(['Por Tipo de Persona']);
+            resumen.push(['Tipo', 'Cantidad']);
+            if (datosFiltrados.porTipo) {
+                datosFiltrados.porTipo.forEach(t => {
+                    resumen.push([t.tipo_persona, t.total]);
+                });
+            }
+
+            const ws1 = XLSX.utils.aoa_to_sheet(resumen);
+            XLSX.utils.book_append_sheet(wb, ws1, 'Resumen');
+
+            if (datosFiltrados.detalladoPorAccesoYTipo && datosFiltrados.detalladoPorAccesoYTipo.length > 0) {
+                const detalle = [
+                    ['Acceso', 'Tipo de Persona', 'Cantidad']
+                ];
+                datosFiltrados.detalladoPorAccesoYTipo.forEach(d => {
+                    detalle.push([d.acceso, d.tipo_persona, d.total]);
+                });
+                const ws2 = XLSX.utils.aoa_to_sheet(detalle);
+                XLSX.utils.book_append_sheet(wb, ws2, 'Detalle');
+            }
+
+            if (datosFiltrados.porHora && datosFiltrados.porHora.length > 0) {
+                const porHora = [
+                    ['Hora', 'Cantidad']
+                ];
+                datosFiltrados.porHora.forEach(h => {
+                    porHora.push([h.hora, h.total]);
+                });
+                const ws3 = XLSX.utils.aoa_to_sheet(porHora);
+                XLSX.utils.book_append_sheet(wb, ws3, 'Por Hora');
+            }
+
+            XLSX.writeFile(wb, `Paraiso_del_Mar_${fecha}.xlsx`);
         }
 
-        if (acceso) {
-            query += ` AND acceso = $${paramCount}`;
-            params.push(acceso);
-            paramCount++;
+        async function cargarAuditoria() {
+            try {
+                const fechaInicio = document.getElementById('auditoriaFechaInicio').value;
+                const fechaFin = document.getElementById('auditoriaFechaFin').value;
+                const usuario = document.getElementById('auditoriaUsuario').value;
+                const tipo = document.getElementById('auditoriaTipo').value;
+                const acceso = document.getElementById('auditoriaAcceso').value;
+
+                let url = `${API}/api/auditoria?fecha_inicio=${fechaInicio}&fecha_fin=${fechaFin}`;
+                if (usuario) url += `&usuario_captura=${usuario}`;
+                if (tipo) url += `&tipo_persona=${tipo}`;
+                if (acceso) url += `&acceso=${acceso}`;
+
+                const res = await fetch(url);
+                datosAuditoria = await res.json();
+
+                if (datosAuditoria.length === 0) {
+                    document.getElementById('contenidoAuditoria').innerHTML = '<p style="text-align: center; color: white; font-size: 18px;">No se encontraron registros</p>';
+                    return;
+                }
+
+                let html = '<div class="tabla"><h2>📋 Histórico de Registros (Últimos 500)</h2>';
+                html += '<table><tr><th>Fecha</th><th>Hora</th><th>Acceso</th><th>Tipo</th><th>Cantidad</th><th>Usuario</th><th>Timestamp</th></tr>';
+                
+                datosAuditoria.forEach(registro => {
+                    const fecha = new Date(registro.timestamp);
+                    const fechaFormato = fecha.toLocaleDateString('es-MX');
+                    const horaFormato = fecha.toLocaleTimeString('es-MX');
+                    
+                    html += `<tr>
+                        <td>${registro.fecha}</td>
+                        <td>${registro.hora}</td>
+                        <td>${registro.acceso}</td>
+                        <td>${registro.tipo_persona}</td>
+                        <td style="text-align: right;">${registro.cantidad}</td>
+                        <td>${registro.usuario_captura}</td>
+                        <td>${fechaFormato} ${horaFormato}</td>
+                    </tr>`;
+                });
+                
+                html += '</table></div>';
+                document.getElementById('contenidoAuditoria').innerHTML = html;
+
+            } catch (e) {
+                document.getElementById('contenidoAuditoria').innerHTML = `<div class="error">❌ Error: No se puede conectar a ${API}</div>`;
+            }
         }
 
-        if (tipo_persona) {
-            query += ` AND tipo_persona = $${paramCount}`;
-            params.push(tipo_persona);
-            paramCount++;
+        function exportarAuditoriaExcel() {
+            if (datosAuditoria.length === 0) {
+                alert('No hay datos de auditoría para exportar');
+                return;
+            }
+
+            const wb = XLSX.utils.book_new();
+            const data = [
+                ['PARAÍSO DEL MAR - Auditoría de Registros'],
+                ['Desde:', document.getElementById('auditoriaFechaInicio').value],
+                ['Hasta:', document.getElementById('auditoriaFechaFin').value],
+                [''],
+                ['Fecha', 'Hora', 'Acceso', 'Tipo', 'Cantidad', 'Usuario', 'Timestamp']
+            ];
+
+            datosAuditoria.forEach(r => {
+                const fecha = new Date(r.timestamp);
+                const fechaFormato = fecha.toLocaleDateString('es-MX');
+                const horaFormato = fecha.toLocaleTimeString('es-MX');
+                
+                data.push([
+                    r.fecha,
+                    r.hora,
+                    r.acceso,
+                    r.tipo_persona,
+                    r.cantidad,
+                    r.usuario_captura,
+                    `${fechaFormato} ${horaFormato}`
+                ]);
+            });
+
+            const ws = XLSX.utils.aoa_to_sheet(data);
+            XLSX.utils.book_append_sheet(wb, ws, 'Auditoría');
+            
+            const fechaInicio = document.getElementById('auditoriaFechaInicio').value;
+            const fechaFin = document.getElementById('auditoriaFechaFin').value;
+            XLSX.writeFile(wb, `Auditoria_${fechaInicio}_a_${fechaFin}.xlsx`);
         }
-
-        if (usuario_captura) {
-            query += ` AND usuario_captura ILIKE $${paramCount}`;
-            params.push(`%${usuario_captura}%`);
-            paramCount++;
-        }
-
-        query += ' ORDER BY timestamp DESC LIMIT 500';
-
-        const result = await pool.query(query, params);
-        res.json(result.rows);
-    } catch (error) {
-        console.error('Error al obtener auditoría:', error);
-        res.status(500).json({ error: 'Error al obtener auditoría' });
-    }
-});
-
-io.on('connection', (socket) => {
-    console.log('Cliente conectado');
-    socket.on('disconnect', () => {
-        console.log('Cliente desconectado');
-    });
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Servidor en puerto ${PORT}`);
-});
-
-module.exports = { app, pool, io };
+        
+        cargar();
+        setInterval(cargar, 30000);
+    </script>
+</body>
+</html>
