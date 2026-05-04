@@ -17,6 +17,24 @@ const pool = new Pool({
 app.use(cors());
 app.use(express.json());
 
+// Crear tabla de auditoría si no existe
+pool.query(`
+  CREATE TABLE IF NOT EXISTS auditoria (
+    id SERIAL PRIMARY KEY,
+    fecha DATE NOT NULL,
+    hora TIME NOT NULL,
+    acceso VARCHAR(50) NOT NULL,
+    tipo_persona VARCHAR(50) NOT NULL,
+    cantidad INTEGER NOT NULL,
+    usuario_captura VARCHAR(100) NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )
+`).then(() => {
+  console.log('✓ Tabla auditoria verificada');
+}).catch(err => {
+  console.error('Error al crear tabla auditoria:', err);
+});
+
 app.get('/health', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW()');
