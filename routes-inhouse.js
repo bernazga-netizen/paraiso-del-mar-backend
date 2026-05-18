@@ -1,23 +1,18 @@
 // ============================================================
-// routes/inhouse.js — Módulo Inhouse, Paraíso del Mar
-// Agregar al servidor Express existente en Render
+// routes-inhouse.js — Módulo Inhouse, Paraíso del Mar
 // ============================================================
 const express = require('express');
 const router  = express.Router();
 const { Pool } = require('pg');
 
-// Reutiliza el pool de conexión existente del proyecto
-// Si ya tienes `db` exportado en otro archivo, impórtalo en su lugar
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 // ── Helpers ─────────────────────────────────────────────────
-
-// Extrae el edificio de la clave de unidad (A202 → A, Casa112 → Casa)
 function extraerEdificio(unidad) {
   if (!unidad) return 'X';
   const u = unidad.trim().toUpperCase();
   if (u.startsWith('CASA') || /^\d/.test(u)) return 'Casa';
-  return u[0]; // A, B, C, D, E, F
+  return u[0];
 }
 
 // ── 1. GET /api/inhouse — lista con filtros ─────────────────
@@ -82,7 +77,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ── 2. GET /api/inhouse/ocupacion — resumen para dashboard ──
+// ── 2. GET /api/inhouse/ocupacion ───────────────────────────
 router.get('/ocupacion', async (req, res) => {
   try {
     const hoy = await pool.query(`
@@ -116,7 +111,7 @@ router.get('/ocupacion', async (req, res) => {
   }
 });
 
-// ── 3. GET /api/inhouse/hoy — check-ins y check-outs de hoy ─
+// ── 3. GET /api/inhouse/hoy ─────────────────────────────────
 router.get('/hoy', async (req, res) => {
   try {
     const [ins, outs] = await Promise.all([
@@ -124,15 +119,13 @@ router.get('/hoy', async (req, res) => {
         SELECT r.*, pm.nombre AS property_manager
         FROM inhouse_registros r
         LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id
-        WHERE r.fecha_ingreso = CURRENT_DATE
-        ORDER BY r.unidad
+        WHERE r.fecha_ingreso = CURRENT_DATE ORDER BY r.unidad
       `),
       pool.query(`
         SELECT r.*, pm.nombre AS property_manager
         FROM inhouse_registros r
         LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id
-        WHERE r.fecha_salida = CURRENT_DATE
-        ORDER BY r.unidad
+        WHERE r.fecha_salida = CURRENT_DATE ORDER BY r.unidad
       `)
     ]);
     res.json({ ok: true, check_ins: ins.rows, check_outs: outs.rows });
@@ -141,13 +134,52 @@ router.get('/hoy', async (req, res) => {
   }
 });
 
-// ── 4. GET /api/inhouse/managers — catálogo de PMs ──────────
+// ── 4. GET /api/inhouse/managers — lista todos los PMs ──────
 router.get('/managers', async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT * FROM inhouse_property_managers WHERE activo = TRUE ORDER BY nombre`
+      `SELECT * FROM inhouse_property_managers ORDER BY nombre`
     );
     res.json({ ok: true, data: r.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── 4b. POST /api/inhouse/managers — nuevo PM ───────────────
+router.post('/managers', async (req, res) => {
+  try {
+    const { nombre, email, telefono } = req.body;
+    if (!nombre || !nombre.trim()) {
+      return res.status(400).json({ ok: false, error: 'El nombre es requerido' });
+    }
+    const r = await pool.query(
+      `INSERT INTO inhouse_property_managers (nombre, email, telefono)
+       VALUES ($1, $2, $3) RETURNING *`,
+      [nombre.trim(), email || null, telefono || null]
+    );
+    res.status(201).json({ ok: true, data: r.rows[0] });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── 4c. PUT /api/inhouse/managers/:id — editar/activar PM ───
+router.put('/managers/:id', async (req, res) => {
+  try {
+    const { nombre, email, telefono, activo } = req.body;
+    const r = await pool.query(
+      `UPDATE inhouse_property_managers SET
+        nombre   = COALESCE($1, nombre),
+        email    = COALESCE($2, email),
+        telefono = COALESCE($3, telefono),
+        activo   = COALESCE($4, activo)
+       WHERE id = $5 RETURNING *`,
+      [nombre || null, email || null, telefono || null,
+       activo !== undefined ? activo : null, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
+    res.json({ ok: true, data: r.rows[0] });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -184,9 +216,8 @@ router.post('/', async (req, res) => {
       nombre_huesped, email, telefono, direccion,
       fecha_ingreso, fecha_salida, num_personas,
       interesado_comprar = false, recibir_info = false,
-      acompanantes = [],        // array de strings
-      pdf_firmado_url,          // base64 o URL del PDF con firma
-      firma_imagen,             // base64 PNG de la firma
+      acompanantes = [],
+      pdf_firmado_url, firma_imagen,
       notas, registrado_por
     } = req.body;
 
@@ -195,7 +226,6 @@ router.post('/', async (req, res) => {
     }
 
     const edificio = extraerEdificio(unidad);
-
     await client.query('BEGIN');
 
     const ins = await client.query(`
@@ -216,7 +246,6 @@ router.post('/', async (req, res) => {
 
     const registro = ins.rows[0];
 
-    // Insertar acompañantes
     if (acompanantes.length > 0) {
       const vals = acompanantes
         .filter(n => n && n.trim())
@@ -231,7 +260,6 @@ router.post('/', async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Emitir evento Socket.io si está disponible (para dashboard en tiempo real)
     if (req.app.get('io')) {
       req.app.get('io').emit('inhouse:nuevo', { registro: registro.id, unidad, nombre_huesped });
     }
@@ -303,7 +331,3 @@ router.delete('/:id', async (req, res) => {
 });
 
 module.exports = router;
-
-// ── Cómo registrar en server.js ─────────────────────────────
-// const inhouseRoutes = require('./routes/inhouse');
-// app.use('/api/inhouse', inhouseRoutes);
