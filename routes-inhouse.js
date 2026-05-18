@@ -15,20 +15,14 @@ function extraerEdificio(unidad) {
   return u[0];
 }
 
-// Verifica si una unidad tiene un registro que se empalme con el rango de fechas dado
-// excludeId: omite ese registro (útil al editar)
 async function verificarTraslape(unidad, fecha_ingreso, fecha_salida, excludeId = null) {
-  // Si no hay fecha de salida, usamos una fecha muy lejana para la comparación
   const fechaSalidaEfectiva = fecha_salida || '2099-12-31';
-
   const params = [unidad.trim().toUpperCase(), fecha_ingreso, fechaSalidaEfectiva];
   let excludeClause = '';
-
   if (excludeId) {
     params.push(excludeId);
     excludeClause = `AND id != $${params.length}`;
   }
-
   const result = await pool.query(`
     SELECT id, nombre_huesped, fecha_ingreso, fecha_salida
     FROM inhouse_registros
@@ -38,7 +32,6 @@ async function verificarTraslape(unidad, fecha_ingreso, fecha_salida, excludeId 
       ${excludeClause}
     LIMIT 1
   `, params);
-
   return result.rows[0] || null;
 }
 
@@ -107,32 +100,61 @@ router.get('/', async (req, res) => {
 // ── 2. GET /api/inhouse/ocupacion ───────────────────────────
 router.get('/ocupacion', async (req, res) => {
   try {
-    const hoy = await pool.query(`
-      SELECT
-        edificio,
-        COUNT(*) FILTER (WHERE tipo = 'H') AS homeowners,
-        COUNT(*) FILTER (WHERE tipo = 'R') AS renters,
-        COUNT(*) FILTER (WHERE tipo = 'G') AS guests,
-        SUM(num_personas) AS personas_total
-      FROM inhouse_registros
-      WHERE fecha_ingreso <= CURRENT_DATE
-        AND (fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE)
-      GROUP BY edificio
-      ORDER BY edificio
-    `);
+    const [hoy, totales, porTipoHoy] = await Promise.all([
 
-    const totales = await pool.query(`
-      SELECT
-        COUNT(*) AS registros_activos,
-        SUM(num_personas) AS personas_activas,
-        COUNT(*) FILTER (WHERE fecha_ingreso = CURRENT_DATE) AS check_in_hoy,
-        COUNT(*) FILTER (WHERE fecha_salida  = CURRENT_DATE) AS check_out_hoy,
-        COUNT(*) FILTER (WHERE fecha_ingreso > CURRENT_DATE) AS futuros
-      FROM inhouse_registros
-      WHERE (fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE)
-    `);
+      // Por edificio — solo activos hoy
+      pool.query(`
+        SELECT
+          edificio,
+          COUNT(*) FILTER (WHERE tipo = 'H') AS homeowners,
+          COUNT(*) FILTER (WHERE tipo = 'R') AS renters,
+          COUNT(*) FILTER (WHERE tipo = 'G') AS guests,
+          SUM(num_personas) AS personas_total
+        FROM inhouse_registros
+        WHERE fecha_ingreso <= CURRENT_DATE
+          AND (fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE)
+        GROUP BY edificio
+        ORDER BY edificio
+      `),
 
-    res.json({ ok: true, por_edificio: hoy.rows, totales: totales.rows[0] });
+      // Totales generales
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (
+            WHERE fecha_ingreso <= CURRENT_DATE
+              AND (fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE)
+          ) AS registros_activos,
+          SUM(num_personas) FILTER (
+            WHERE fecha_ingreso <= CURRENT_DATE
+              AND (fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE)
+          ) AS personas_activas,
+          COUNT(*) FILTER (WHERE fecha_ingreso = CURRENT_DATE) AS check_in_hoy,
+          COUNT(*) FILTER (WHERE fecha_salida  = CURRENT_DATE) AS check_out_hoy,
+          COUNT(*) FILTER (WHERE fecha_ingreso > CURRENT_DATE) AS futuros
+        FROM inhouse_registros
+        WHERE fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE
+      `),
+
+      // Desglose por tipo — solo activos hoy
+      pool.query(`
+        SELECT
+          tipo,
+          COUNT(*) AS unidades_total,
+          COALESCE(SUM(num_personas), 0) AS personas_total
+        FROM inhouse_registros
+        WHERE fecha_ingreso <= CURRENT_DATE
+          AND (fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE)
+        GROUP BY tipo
+        ORDER BY tipo
+      `)
+    ]);
+
+    res.json({
+      ok: true,
+      por_edificio: hoy.rows,
+      totales: totales.rows[0],
+      por_tipo_hoy: porTipoHoy.rows
+    });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -250,7 +272,6 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'unidad, nombre_huesped y fecha_ingreso son requeridos' });
     }
 
-    // ── Validación de traslape de fechas ──────────────────────
     const traslape = await verificarTraslape(unidad, fecha_ingreso, fecha_salida);
     if (traslape) {
       const fi = traslape.fecha_ingreso.toString().substring(0, 10);
@@ -322,7 +343,6 @@ router.put('/:id', async (req, res) => {
       interesado_comprar, recibir_info, notas
     } = req.body;
 
-    // ── Validación de traslape al editar ──────────────────────
     if (unidad && fecha_ingreso) {
       const traslape = await verificarTraslape(unidad, fecha_ingreso, fecha_salida, req.params.id);
       if (traslape) {
