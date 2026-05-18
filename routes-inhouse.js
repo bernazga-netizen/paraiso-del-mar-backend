@@ -15,6 +15,33 @@ function extraerEdificio(unidad) {
   return u[0];
 }
 
+// Verifica si una unidad tiene un registro que se empalme con el rango de fechas dado
+// excludeId: omite ese registro (útil al editar)
+async function verificarTraslape(unidad, fecha_ingreso, fecha_salida, excludeId = null) {
+  // Si no hay fecha de salida, usamos una fecha muy lejana para la comparación
+  const fechaSalidaEfectiva = fecha_salida || '2099-12-31';
+
+  const params = [unidad.trim().toUpperCase(), fecha_ingreso, fechaSalidaEfectiva];
+  let excludeClause = '';
+
+  if (excludeId) {
+    params.push(excludeId);
+    excludeClause = `AND id != $${params.length}`;
+  }
+
+  const result = await pool.query(`
+    SELECT id, nombre_huesped, fecha_ingreso, fecha_salida
+    FROM inhouse_registros
+    WHERE UPPER(unidad) = $1
+      AND fecha_ingreso < $3
+      AND (fecha_salida IS NULL OR fecha_salida > $2)
+      ${excludeClause}
+    LIMIT 1
+  `, params);
+
+  return result.rows[0] || null;
+}
+
 // ── 1. GET /api/inhouse — lista con filtros ─────────────────
 router.get('/', async (req, res) => {
   try {
@@ -134,12 +161,10 @@ router.get('/hoy', async (req, res) => {
   }
 });
 
-// ── 4. GET /api/inhouse/managers — lista todos los PMs ──────
+// ── 4. GET /api/inhouse/managers ────────────────────────────
 router.get('/managers', async (req, res) => {
   try {
-    const r = await pool.query(
-      `SELECT * FROM inhouse_property_managers ORDER BY nombre`
-    );
+    const r = await pool.query(`SELECT * FROM inhouse_property_managers ORDER BY nombre`);
     res.json({ ok: true, data: r.rows });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -225,6 +250,19 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'unidad, nombre_huesped y fecha_ingreso son requeridos' });
     }
 
+    // ── Validación de traslape de fechas ──────────────────────
+    const traslape = await verificarTraslape(unidad, fecha_ingreso, fecha_salida);
+    if (traslape) {
+      const fi = traslape.fecha_ingreso.toString().substring(0, 10);
+      const fs = traslape.fecha_salida ? traslape.fecha_salida.toString().substring(0, 10) : 'sin fecha de salida';
+      return res.status(409).json({
+        ok: false,
+        error: `La unidad ${unidad} ya tiene un registro en esas fechas`,
+        detalle: `Registro existente: ${traslape.nombre_huesped} · ${fi} → ${fs}`,
+        codigo: 'TRASLAPE_FECHAS'
+      });
+    }
+
     const edificio = extraerEdificio(unidad);
     await client.query('BEGIN');
 
@@ -283,6 +321,21 @@ router.put('/:id', async (req, res) => {
       fecha_ingreso, fecha_salida, num_personas,
       interesado_comprar, recibir_info, notas
     } = req.body;
+
+    // ── Validación de traslape al editar ──────────────────────
+    if (unidad && fecha_ingreso) {
+      const traslape = await verificarTraslape(unidad, fecha_ingreso, fecha_salida, req.params.id);
+      if (traslape) {
+        const fi = traslape.fecha_ingreso.toString().substring(0, 10);
+        const fs = traslape.fecha_salida ? traslape.fecha_salida.toString().substring(0, 10) : 'sin fecha de salida';
+        return res.status(409).json({
+          ok: false,
+          error: `La unidad ${unidad} ya tiene un registro en esas fechas`,
+          detalle: `Registro existente: ${traslape.nombre_huesped} · ${fi} → ${fs}`,
+          codigo: 'TRASLAPE_FECHAS'
+        });
+      }
+    }
 
     const edificio = unidad ? extraerEdificio(unidad) : undefined;
 
