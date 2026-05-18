@@ -242,6 +242,11 @@ io.on('connection', (socket) => {
     });
 });
 
+// ── Módulo Inhouse ───────────────────────────────────────────
+const inhouseRoutes = require('./routes-inhouse');
+app.use('/api/inhouse', inhouseRoutes);
+app.set('io', io);
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Servidor en puerto ${PORT}`);
