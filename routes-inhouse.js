@@ -1,8 +1,8 @@
 // ============================================================
 // routes-inhouse.js — Módulo Inhouse, Paraíso del Mar
 // ============================================================
-const express = require('express');
-const router  = express.Router();
+const express  = require('express');
+const router   = express.Router();
 const { Pool } = require('pg');
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -34,6 +34,30 @@ async function verificarTraslape(unidad, fecha_ingreso, fecha_salida, excludeId 
   `, params);
   return result.rows[0] || null;
 }
+
+// Guarda un evento en el historial
+async function guardarHistorial(client, { registro_id, usuario_id, usuario_nombre, accion, campo, valor_antes, valor_despues }) {
+  await client.query(`
+    INSERT INTO inhouse_historial
+      (registro_id, usuario_id, usuario_nombre, accion, campo, valor_antes, valor_despues)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [registro_id, usuario_id || null, usuario_nombre || 'Sistema', accion, campo || null, valor_antes || null, valor_despues || null]);
+}
+
+// Campos auditables y sus etiquetas legibles
+const CAMPOS_AUDITABLES = {
+  unidad:              'Unidad',
+  tipo:                'Tipo',
+  nombre_huesped:      'Nombre del huésped',
+  email:               'Email',
+  telefono:            'Teléfono',
+  direccion:           'Dirección',
+  fecha_ingreso:       'Check in',
+  fecha_salida:        'Check out',
+  num_personas:        'Número de personas',
+  property_manager_id: 'Property Manager',
+  notas:               'Notas',
+};
 
 // ── 1. GET /api/inhouse — lista con filtros ─────────────────
 router.get('/', async (req, res) => {
@@ -101,11 +125,8 @@ router.get('/', async (req, res) => {
 router.get('/ocupacion', async (req, res) => {
   try {
     const [hoy, totales, porTipoHoy] = await Promise.all([
-
-      // Por edificio — solo activos hoy
       pool.query(`
-        SELECT
-          edificio,
+        SELECT edificio,
           COUNT(*) FILTER (WHERE tipo = 'H') AS homeowners,
           COUNT(*) FILTER (WHERE tipo = 'R') AS renters,
           COUNT(*) FILTER (WHERE tipo = 'G') AS guests,
@@ -113,11 +134,8 @@ router.get('/ocupacion', async (req, res) => {
         FROM inhouse_registros
         WHERE fecha_ingreso <= CURRENT_DATE
           AND (fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE)
-        GROUP BY edificio
-        ORDER BY edificio
+        GROUP BY edificio ORDER BY edificio
       `),
-
-      // Totales generales
       pool.query(`
         SELECT
           COUNT(*) FILTER (
@@ -134,27 +152,18 @@ router.get('/ocupacion', async (req, res) => {
         FROM inhouse_registros
         WHERE fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE
       `),
-
-      // Desglose por tipo — solo activos hoy
       pool.query(`
-        SELECT
-          tipo,
+        SELECT tipo,
           COUNT(*) AS unidades_total,
           COALESCE(SUM(num_personas), 0) AS personas_total
         FROM inhouse_registros
         WHERE fecha_ingreso <= CURRENT_DATE
           AND (fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE)
-        GROUP BY tipo
-        ORDER BY tipo
+        GROUP BY tipo ORDER BY tipo
       `)
     ]);
 
-    res.json({
-      ok: true,
-      por_edificio: hoy.rows,
-      totales: totales.rows[0],
-      por_tipo_hoy: porTipoHoy.rows
-    });
+    res.json({ ok: true, por_edificio: hoy.rows, totales: totales.rows[0], por_tipo_hoy: porTipoHoy.rows });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -193,7 +202,7 @@ router.get('/managers', async (req, res) => {
   }
 });
 
-// ── 4b. POST /api/inhouse/managers — nuevo PM ───────────────
+// ── 4b. POST /api/inhouse/managers ──────────────────────────
 router.post('/managers', async (req, res) => {
   try {
     const { nombre, email, telefono } = req.body;
@@ -211,7 +220,7 @@ router.post('/managers', async (req, res) => {
   }
 });
 
-// ── 4c. PUT /api/inhouse/managers/:id — editar/activar PM ───
+// ── 4c. PUT /api/inhouse/managers/:id ───────────────────────
 router.put('/managers/:id', async (req, res) => {
   try {
     const { nombre, email, telefono, activo } = req.body;
@@ -232,7 +241,7 @@ router.put('/managers/:id', async (req, res) => {
   }
 });
 
-// ── 5. GET /api/inhouse/:id — detalle completo ──────────────
+// ── 5. GET /api/inhouse/:id ──────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
     const r = await pool.query(`
@@ -310,12 +319,19 @@ router.post('/', async (req, res) => {
         .filter(n => n && n.trim())
         .map((nombre, i) => `('${registro.id}', '${nombre.replace(/'/g, "''")}', ${i + 1})`);
       if (vals.length > 0) {
-        await client.query(`
-          INSERT INTO inhouse_acompanantes (registro_id, nombre, orden)
-          VALUES ${vals.join(',')}
-        `);
+        await client.query(`INSERT INTO inhouse_acompanantes (registro_id, nombre, orden) VALUES ${vals.join(',')}`);
       }
     }
+
+    // Registrar en historial
+    await guardarHistorial(client, {
+      registro_id:    registro.id,
+      usuario_nombre: registrado_por || 'Sistema',
+      accion:         'crear',
+      campo:          null,
+      valor_antes:    null,
+      valor_despues:  `${unidad} · ${nombre_huesped}`
+    });
 
     await client.query('COMMIT');
 
@@ -333,14 +349,16 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ── 7. PUT /api/inhouse/:id — editar registro ───────────────
+// ── 7. PUT /api/inhouse/:id — editar con historial ──────────
 router.put('/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
     const {
       unidad, tipo, property_manager_id,
       nombre_huesped, email, telefono, direccion,
       fecha_ingreso, fecha_salida, num_personas,
-      interesado_comprar, recibir_info, notas
+      interesado_comprar, recibir_info, notas,
+      usuario_id, usuario_nombre  // quién edita
     } = req.body;
 
     if (unidad && fecha_ingreso) {
@@ -357,9 +375,18 @@ router.put('/:id', async (req, res) => {
       }
     }
 
+    // Obtener valores actuales para comparar
+    const anterior = await client.query(
+      `SELECT * FROM inhouse_registros WHERE id = $1`, [req.params.id]
+    );
+    if (!anterior.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
+    const ant = anterior.rows[0];
+
     const edificio = unidad ? extraerEdificio(unidad) : undefined;
 
-    const r = await pool.query(`
+    await client.query('BEGIN');
+
+    const r = await client.query(`
       UPDATE inhouse_registros SET
         unidad              = COALESCE($1,  unidad),
         edificio            = COALESCE($2,  edificio),
@@ -383,23 +410,79 @@ router.put('/:id', async (req, res) => {
         interesado_comprar, recibir_info, notas,
         req.params.id]);
 
-    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
-    res.json({ ok: true, data: r.rows[0] });
+    const nuevo = r.rows[0];
+
+    // Detectar y guardar qué campos cambiaron
+    const camposAComparar = {
+      unidad, tipo, property_manager_id, nombre_huesped,
+      email, telefono, direccion, fecha_ingreso,
+      fecha_salida, num_personas, notas
+    };
+
+    for (const [campo, valorNuevo] of Object.entries(camposAComparar)) {
+      if (valorNuevo === undefined) continue;
+      const valorAntes = ant[campo] !== null && ant[campo] !== undefined
+        ? ant[campo].toString().substring(0, 10) === ant[campo].toString() // es fecha
+          ? ant[campo].toString().substring(0, 10)
+          : ant[campo].toString()
+        : null;
+      const valorDespues = valorNuevo !== null ? valorNuevo.toString() : null;
+
+      if (valorAntes !== valorDespues) {
+        await guardarHistorial(client, {
+          registro_id:    req.params.id,
+          usuario_id:     usuario_id || null,
+          usuario_nombre: usuario_nombre || 'Administración',
+          accion:         'editar',
+          campo:          CAMPOS_AUDITABLES[campo] || campo,
+          valor_antes:    valorAntes,
+          valor_despues:  valorDespues
+        });
+      }
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, data: nuevo });
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
   }
 });
 
-// ── 8. DELETE /api/inhouse/:id — eliminar registro ──────────
+// ── 8. DELETE /api/inhouse/:id — eliminar con historial ─────
 router.delete('/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
-    const r = await pool.query(
-      `DELETE FROM inhouse_registros WHERE id = $1 RETURNING id`, [req.params.id]
+    const { usuario_id, usuario_nombre } = req.query;
+
+    // Guardar info antes de eliminar
+    const ant = await client.query(
+      `SELECT unidad, nombre_huesped FROM inhouse_registros WHERE id = $1`, [req.params.id]
     );
-    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
+    if (!ant.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
+
+    await client.query('BEGIN');
+
+    // Registrar en historial ANTES de eliminar (el CASCADE borrará el historial si se elimina el registro)
+    // Por eso guardamos la info del registro manualmente
+    await client.query(`
+      INSERT INTO inhouse_historial
+        (registro_id, usuario_id, usuario_nombre, accion, campo, valor_antes, valor_despues)
+      VALUES ($1, $2, $3, 'eliminar', NULL, $4, NULL)
+    `, [req.params.id, usuario_id || null, usuario_nombre || 'Administración',
+        `${ant.rows[0].unidad} · ${ant.rows[0].nombre_huesped}`]);
+
+    await client.query(`DELETE FROM inhouse_registros WHERE id = $1`, [req.params.id]);
+    await client.query('COMMIT');
+
     res.json({ ok: true, deleted: req.params.id });
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
   }
 });
 
