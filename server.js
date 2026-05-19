@@ -244,8 +244,12 @@ io.on('connection', (socket) => {
 });
 
 // ── Módulo Inhouse ───────────────────────────────────────────
-const inhouseRoutes = require('./routes-inhouse');
-app.use('/api/inhouse', inhouseRoutes);
+const inhouseRoutes   = require('./routes-inhouse');
+const authRoutes      = require('./routes-auth');
+const historialRoutes = require('./routes-historial');
+app.use('/api/inhouse',   inhouseRoutes);
+app.use('/api/auth',      authRoutes);
+app.use('/api/historial', historialRoutes);
 app.set('io', io);
 
 const PORT = process.env.PORT || 3000;
