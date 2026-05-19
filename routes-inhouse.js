@@ -35,7 +35,6 @@ async function verificarTraslape(unidad, fecha_ingreso, fecha_salida, excludeId 
   return result.rows[0] || null;
 }
 
-// Guarda un evento en el historial
 async function guardarHistorial(client, { registro_id, usuario_id, usuario_nombre, accion, campo, valor_antes, valor_despues }) {
   await client.query(`
     INSERT INTO inhouse_historial
@@ -44,7 +43,6 @@ async function guardarHistorial(client, { registro_id, usuario_id, usuario_nombr
   `, [registro_id, usuario_id || null, usuario_nombre || 'Sistema', accion, campo || null, valor_antes || null, valor_despues || null]);
 }
 
-// Campos auditables y sus etiquetas legibles
 const CAMPOS_AUDITABLES = {
   unidad:              'Unidad',
   tipo:                'Tipo',
@@ -241,7 +239,79 @@ router.put('/managers/:id', async (req, res) => {
   }
 });
 
-// ── 5. GET /api/inhouse/:id ──────────────────────────────────
+// ── 5. GET /api/inhouse/estadisticas/mensuales ──────────────
+// IMPORTANTE: debe ir ANTES de /:id para que Express no lo capture como ID
+router.get('/estadisticas/mensuales', async (req, res) => {
+  try {
+    const anio = parseInt(req.query.anio) || new Date().getFullYear();
+
+    const [checkins, checkouts, ocupacion] = await Promise.all([
+
+      pool.query(`
+        SELECT
+          EXTRACT(MONTH FROM fecha_ingreso)::int AS mes,
+          COUNT(*) AS total,
+          SUM(num_personas) AS personas
+        FROM inhouse_registros
+        WHERE EXTRACT(YEAR FROM fecha_ingreso) = $1
+        GROUP BY mes ORDER BY mes
+      `, [anio]),
+
+      pool.query(`
+        SELECT
+          EXTRACT(MONTH FROM fecha_salida)::int AS mes,
+          COUNT(*) AS total,
+          SUM(num_personas) AS personas
+        FROM inhouse_registros
+        WHERE fecha_salida IS NOT NULL
+          AND EXTRACT(YEAR FROM fecha_salida) = $1
+        GROUP BY mes ORDER BY mes
+      `, [anio]),
+
+      pool.query(`
+        SELECT
+          m.mes,
+          COUNT(r.id) AS registros_activos,
+          COALESCE(SUM(r.num_personas), 0) AS personas_total
+        FROM generate_series(1, 12) AS m(mes)
+        LEFT JOIN inhouse_registros r ON (
+          EXTRACT(YEAR FROM r.fecha_ingreso) <= $1
+          AND (r.fecha_salida IS NULL OR EXTRACT(YEAR FROM r.fecha_salida) >= $1)
+          AND EXTRACT(MONTH FROM r.fecha_ingreso) <= m.mes
+          AND (r.fecha_salida IS NULL OR EXTRACT(MONTH FROM r.fecha_salida) >= m.mes)
+          AND (
+            EXTRACT(YEAR FROM r.fecha_ingreso) < $1
+            OR EXTRACT(MONTH FROM r.fecha_ingreso) <= m.mes
+          )
+        )
+        GROUP BY m.mes ORDER BY m.mes
+      `, [anio])
+    ]);
+
+    const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    const data = meses.map((nombre, i) => {
+      const mes = i + 1;
+      const ci  = checkins.rows.find(r => r.mes === mes);
+      const co  = checkouts.rows.find(r => r.mes === mes);
+      const oc  = ocupacion.rows.find(r => parseInt(r.mes) === mes);
+      return {
+        mes: nombre,
+        checkins:    ci ? parseInt(ci.total) : 0,
+        checkouts:   co ? parseInt(co.total) : 0,
+        personas_ci: ci ? parseInt(ci.personas) : 0,
+        personas_co: co ? parseInt(co.personas) : 0,
+        ocupacion:   oc ? parseInt(oc.registros_activos) : 0,
+        personas_oc: oc ? parseInt(oc.personas_total) : 0,
+      };
+    });
+
+    res.json({ ok: true, anio, data });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── 6. GET /api/inhouse/:id ──────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
     const r = await pool.query(`
@@ -263,7 +333,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// ── 6. POST /api/inhouse — nuevo registro ───────────────────
+// ── 7. POST /api/inhouse — nuevo registro ───────────────────
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -323,7 +393,6 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Registrar en historial
     await guardarHistorial(client, {
       registro_id:    registro.id,
       usuario_nombre: registrado_por || 'Sistema',
@@ -349,7 +418,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ── 7. PUT /api/inhouse/:id — editar con historial ──────────
+// ── 8. PUT /api/inhouse/:id — editar con historial ──────────
 router.put('/:id', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -358,7 +427,7 @@ router.put('/:id', async (req, res) => {
       nombre_huesped, email, telefono, direccion,
       fecha_ingreso, fecha_salida, num_personas,
       interesado_comprar, recibir_info, notas,
-      usuario_id, usuario_nombre  // quién edita
+      usuario_id, usuario_nombre
     } = req.body;
 
     if (unidad && fecha_ingreso) {
@@ -375,7 +444,6 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    // Obtener valores actuales para comparar
     const anterior = await client.query(
       `SELECT * FROM inhouse_registros WHERE id = $1`, [req.params.id]
     );
@@ -412,7 +480,6 @@ router.put('/:id', async (req, res) => {
 
     const nuevo = r.rows[0];
 
-    // Detectar y guardar qué campos cambiaron
     const camposAComparar = {
       unidad, tipo, property_manager_id, nombre_huesped,
       email, telefono, direccion, fecha_ingreso,
@@ -422,7 +489,7 @@ router.put('/:id', async (req, res) => {
     for (const [campo, valorNuevo] of Object.entries(camposAComparar)) {
       if (valorNuevo === undefined) continue;
       const valorAntes = ant[campo] !== null && ant[campo] !== undefined
-        ? ant[campo].toString().substring(0, 10) === ant[campo].toString() // es fecha
+        ? ant[campo].toString().substring(0, 10) === ant[campo].toString()
           ? ant[campo].toString().substring(0, 10)
           : ant[campo].toString()
         : null;
@@ -451,13 +518,12 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// ── 8. DELETE /api/inhouse/:id — eliminar con historial ─────
+// ── 9. DELETE /api/inhouse/:id — eliminar con historial ─────
 router.delete('/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     const { usuario_id, usuario_nombre } = req.query;
 
-    // Guardar info antes de eliminar
     const ant = await client.query(
       `SELECT unidad, nombre_huesped FROM inhouse_registros WHERE id = $1`, [req.params.id]
     );
@@ -465,8 +531,6 @@ router.delete('/:id', async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Registrar en historial ANTES de eliminar (el CASCADE borrará el historial si se elimina el registro)
-    // Por eso guardamos la info del registro manualmente
     await client.query(`
       INSERT INTO inhouse_historial
         (registro_id, usuario_id, usuario_nombre, accion, campo, valor_antes, valor_despues)
@@ -483,83 +547,6 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   } finally {
     client.release();
-  }
-});
-
-// ── 9. GET /api/inhouse/estadisticas/mensuales ──────────────
-// Devuelve check-ins, check-outs y ocupación promedio por mes
-// Parámetro opcional: anio (default: año actual)
-router.get('/estadisticas/mensuales', async (req, res) => {
-  try {
-    const anio = parseInt(req.query.anio) || new Date().getFullYear();
-
-    const [checkins, checkouts, ocupacion] = await Promise.all([
-
-      // Check-ins por mes
-      pool.query(`
-        SELECT
-          EXTRACT(MONTH FROM fecha_ingreso)::int AS mes,
-          COUNT(*) AS total,
-          SUM(num_personas) AS personas
-        FROM inhouse_registros
-        WHERE EXTRACT(YEAR FROM fecha_ingreso) = $1
-        GROUP BY mes ORDER BY mes
-      `, [anio]),
-
-      // Check-outs por mes
-      pool.query(`
-        SELECT
-          EXTRACT(MONTH FROM fecha_salida)::int AS mes,
-          COUNT(*) AS total,
-          SUM(num_personas) AS personas
-        FROM inhouse_registros
-        WHERE fecha_salida IS NOT NULL
-          AND EXTRACT(YEAR FROM fecha_salida) = $1
-        GROUP BY mes ORDER BY mes
-      `, [anio]),
-
-      // Ocupación promedio por mes (registros activos durante ese mes)
-      pool.query(`
-        SELECT
-          m.mes,
-          COUNT(r.id) AS registros_activos,
-          COALESCE(SUM(r.num_personas), 0) AS personas_total
-        FROM generate_series(1, 12) AS m(mes)
-        LEFT JOIN inhouse_registros r ON (
-          EXTRACT(YEAR FROM r.fecha_ingreso) <= $1
-          AND (r.fecha_salida IS NULL OR EXTRACT(YEAR FROM r.fecha_salida) >= $1)
-          AND EXTRACT(MONTH FROM r.fecha_ingreso) <= m.mes
-          AND (r.fecha_salida IS NULL OR EXTRACT(MONTH FROM r.fecha_salida) >= m.mes)
-          AND (
-            EXTRACT(YEAR FROM r.fecha_ingreso) < $1
-            OR EXTRACT(MONTH FROM r.fecha_ingreso) <= m.mes
-          )
-        )
-        GROUP BY m.mes ORDER BY m.mes
-      `, [anio])
-    ]);
-
-    // Construir array de 12 meses
-    const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-    const data = meses.map((nombre, i) => {
-      const mes = i + 1;
-      const ci  = checkins.rows.find(r => r.mes === mes);
-      const co  = checkouts.rows.find(r => r.mes === mes);
-      const oc  = ocupacion.rows.find(r => parseInt(r.mes) === mes);
-      return {
-        mes: nombre,
-        checkins:    ci ? parseInt(ci.total) : 0,
-        checkouts:   co ? parseInt(co.total) : 0,
-        personas_ci: ci ? parseInt(ci.personas) : 0,
-        personas_co: co ? parseInt(co.personas) : 0,
-        ocupacion:   oc ? parseInt(oc.registros_activos) : 0,
-        personas_oc: oc ? parseInt(oc.personas_total) : 0,
-      };
-    });
-
-    res.json({ ok: true, anio, data });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
