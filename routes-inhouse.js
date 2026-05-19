@@ -486,4 +486,81 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// ── 9. GET /api/inhouse/estadisticas/mensuales ──────────────
+// Devuelve check-ins, check-outs y ocupación promedio por mes
+// Parámetro opcional: anio (default: año actual)
+router.get('/estadisticas/mensuales', async (req, res) => {
+  try {
+    const anio = parseInt(req.query.anio) || new Date().getFullYear();
+
+    const [checkins, checkouts, ocupacion] = await Promise.all([
+
+      // Check-ins por mes
+      pool.query(`
+        SELECT
+          EXTRACT(MONTH FROM fecha_ingreso)::int AS mes,
+          COUNT(*) AS total,
+          SUM(num_personas) AS personas
+        FROM inhouse_registros
+        WHERE EXTRACT(YEAR FROM fecha_ingreso) = $1
+        GROUP BY mes ORDER BY mes
+      `, [anio]),
+
+      // Check-outs por mes
+      pool.query(`
+        SELECT
+          EXTRACT(MONTH FROM fecha_salida)::int AS mes,
+          COUNT(*) AS total,
+          SUM(num_personas) AS personas
+        FROM inhouse_registros
+        WHERE fecha_salida IS NOT NULL
+          AND EXTRACT(YEAR FROM fecha_salida) = $1
+        GROUP BY mes ORDER BY mes
+      `, [anio]),
+
+      // Ocupación promedio por mes (registros activos durante ese mes)
+      pool.query(`
+        SELECT
+          m.mes,
+          COUNT(r.id) AS registros_activos,
+          COALESCE(SUM(r.num_personas), 0) AS personas_total
+        FROM generate_series(1, 12) AS m(mes)
+        LEFT JOIN inhouse_registros r ON (
+          EXTRACT(YEAR FROM r.fecha_ingreso) <= $1
+          AND (r.fecha_salida IS NULL OR EXTRACT(YEAR FROM r.fecha_salida) >= $1)
+          AND EXTRACT(MONTH FROM r.fecha_ingreso) <= m.mes
+          AND (r.fecha_salida IS NULL OR EXTRACT(MONTH FROM r.fecha_salida) >= m.mes)
+          AND (
+            EXTRACT(YEAR FROM r.fecha_ingreso) < $1
+            OR EXTRACT(MONTH FROM r.fecha_ingreso) <= m.mes
+          )
+        )
+        GROUP BY m.mes ORDER BY m.mes
+      `, [anio])
+    ]);
+
+    // Construir array de 12 meses
+    const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    const data = meses.map((nombre, i) => {
+      const mes = i + 1;
+      const ci  = checkins.rows.find(r => r.mes === mes);
+      const co  = checkouts.rows.find(r => r.mes === mes);
+      const oc  = ocupacion.rows.find(r => parseInt(r.mes) === mes);
+      return {
+        mes: nombre,
+        checkins:    ci ? parseInt(ci.total) : 0,
+        checkouts:   co ? parseInt(co.total) : 0,
+        personas_ci: ci ? parseInt(ci.personas) : 0,
+        personas_co: co ? parseInt(co.personas) : 0,
+        ocupacion:   oc ? parseInt(oc.registros_activos) : 0,
+        personas_oc: oc ? parseInt(oc.personas_total) : 0,
+      };
+    });
+
+    res.json({ ok: true, anio, data });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 module.exports = router;
