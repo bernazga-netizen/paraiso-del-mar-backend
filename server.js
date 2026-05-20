@@ -4,6 +4,8 @@ const { Pool } = require('pg');
 const http = require('http');
 const socketIo = require('socket.io');
 require('dotenv').config();
+const helmet       = require('helmet');
+const rateLimit    = require('express-rate-limit');
 
 const app = express();
 const server = http.createServer(app);
@@ -36,6 +38,31 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
+
+// ── SEGURIDAD: headers HTTP seguros ─────────────────────────
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
+
+// ── SEGURIDAD: rate limiting global ─────────────────────────
+const limiterGeneral = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes, intente más tarde' }
+});
+
+const limiterLogin = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Demasiados intentos de inicio de sesión, espere 15 minutos' }
+});
+
+app.use('/api/', limiterGeneral);
+app.use('/api/auth/login', limiterLogin);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
