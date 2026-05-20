@@ -4,7 +4,10 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+
+
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -45,6 +48,34 @@ function requireAdminKey(req, res, next) {
   }
 
   next();
+}function requireAuth(req, res, next) {
+  try {
+    const auth = req.headers.authorization;
+
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return res.status(401).json({
+        ok: false,
+        error: 'No autenticado'
+      });
+    }
+
+    const token = auth.split(' ')[1];
+
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET
+    );
+
+    req.usuario = decoded;
+
+    next();
+
+  } catch (err) {
+    return res.status(401).json({
+      ok: false,
+      error: 'Token inválido'
+    });
+  }
 }
 
 // ------------------------------------------------------------
@@ -118,6 +149,18 @@ router.post('/login', async (req, res) => {
       [u.id]
     );
 
+    const token = jwt.sign(
+      {
+        id: u.id,
+        nombre: u.nombre,
+        rol: u.rol
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: '12h'
+      }
+    );
+
     res.json({
       ok: true,
       usuario: {
@@ -125,11 +168,13 @@ router.post('/login', async (req, res) => {
         nombre: u.nombre,
         email: u.email,
         rol: u.rol
-      }
+      },
+      token
     });
 
   } catch (err) {
     console.error('login:', err);
+
     res.status(500).json({
       ok: false,
       error: 'Error interno del servidor'
@@ -140,7 +185,7 @@ router.post('/login', async (req, res) => {
 // ------------------------------------------------------------
 // usuarios protegidos
 // ------------------------------------------------------------
-router.get('/usuarios', requireAdminKey, async (req, res) => {
+router.get('/usuarios', requireAuth, async (req, res) => {
   try {
     const r = await pool.query(`
       SELECT
@@ -173,7 +218,7 @@ router.get('/usuarios', requireAdminKey, async (req, res) => {
 // ------------------------------------------------------------
 // cambio password protegido
 // ------------------------------------------------------------
-router.put('/usuarios/:id/password', requireAdminKey, async (req, res) => {
+router.put('/usuarios/:id/password', requireAuth, async (req, res) => {
   try {
     const errPass = validarPassword(req.body.password);
 
@@ -210,7 +255,7 @@ router.put('/usuarios/:id/password', requireAdminKey, async (req, res) => {
 // ------------------------------------------------------------
 // activar/desactivar protegido
 // ------------------------------------------------------------
-router.put('/usuarios/:id', requireAdminKey, async (req, res) => {
+router.put('/usuarios/:id', requireAuth, async (req, res) => {
   try {
     const { activo } = req.body;
 
