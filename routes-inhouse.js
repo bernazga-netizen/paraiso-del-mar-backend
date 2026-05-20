@@ -60,22 +60,36 @@ const CAMPOS_AUDITABLES = {
 // ── 1. GET /api/inhouse — lista con filtros ─────────────────
 router.get('/', async (req, res) => {
   try {
-    const { estado, edificio, tipo, pm, q, limit = 100, offset = 0 } = req.query;
+    const { estado, edificio, tipo, pm, q, fecha_inicio, fecha_fin, limit = 100, offset = 0 } = req.query;
 
     let where = [];
     const params = [];
     let p = 1;
 
-    if (estado === 'activo') {
-      where.push(`fecha_ingreso <= CURRENT_DATE AND (fecha_salida IS NULL OR fecha_salida >= CURRENT_DATE)`);
-    } else if (estado === 'futuro') {
-      where.push(`fecha_ingreso > CURRENT_DATE`);
-    } else if (estado === 'salida') {
-      where.push(`fecha_salida < CURRENT_DATE`);
+    // Filtro por estado (se omite si hay filtro de fechas)
+    if (!fecha_inicio && !fecha_fin) {
+      if (estado === 'activo') {
+        where.push(`r.fecha_ingreso <= CURRENT_DATE AND (r.fecha_salida IS NULL OR r.fecha_salida >= CURRENT_DATE)`);
+      } else if (estado === 'futuro') {
+        where.push(`r.fecha_ingreso > CURRENT_DATE`);
+      } else if (estado === 'salida') {
+        where.push(`r.fecha_salida < CURRENT_DATE`);
+      }
     }
 
-    if (edificio) { where.push(`r.edificio = $${p++}`); params.push(edificio); }
-    if (tipo)     { where.push(`r.tipo = $${p++}`);     params.push(tipo); }
+    // Filtro de rango de fechas: registros activos durante el período
+    // Check-in <= fecha_fin  Y  (Check-out IS NULL OR Check-out >= fecha_inicio)
+    if (fecha_inicio) {
+      where.push(`(r.fecha_salida IS NULL OR r.fecha_salida >= $${p++})`);
+      params.push(fecha_inicio);
+    }
+    if (fecha_fin) {
+      where.push(`r.fecha_ingreso <= $${p++}`);
+      params.push(fecha_fin);
+    }
+
+    if (edificio) { where.push(`r.edificio = $${p++}`);            params.push(edificio); }
+    if (tipo)     { where.push(`r.tipo = $${p++}`);                params.push(tipo); }
     if (pm)       { where.push(`r.property_manager_id = $${p++}`); params.push(parseInt(pm)); }
     if (q)        {
       where.push(`(r.nombre_huesped ILIKE $${p} OR r.unidad ILIKE $${p})`);
@@ -240,13 +254,12 @@ router.put('/managers/:id', async (req, res) => {
 });
 
 // ── 5. GET /api/inhouse/estadisticas/mensuales ──────────────
-// IMPORTANTE: debe ir ANTES de /:id para que Express no lo capture como ID
+// IMPORTANTE: debe ir ANTES de /:id
 router.get('/estadisticas/mensuales', async (req, res) => {
   try {
     const anio = parseInt(req.query.anio) || new Date().getFullYear();
 
     const [checkins, checkouts, ocupacion] = await Promise.all([
-
       pool.query(`
         SELECT
           EXTRACT(MONTH FROM fecha_ingreso)::int AS mes,
@@ -256,7 +269,6 @@ router.get('/estadisticas/mensuales', async (req, res) => {
         WHERE EXTRACT(YEAR FROM fecha_ingreso) = $1
         GROUP BY mes ORDER BY mes
       `, [anio]),
-
       pool.query(`
         SELECT
           EXTRACT(MONTH FROM fecha_salida)::int AS mes,
@@ -267,7 +279,6 @@ router.get('/estadisticas/mensuales', async (req, res) => {
           AND EXTRACT(YEAR FROM fecha_salida) = $1
         GROUP BY mes ORDER BY mes
       `, [anio]),
-
       pool.query(`
         SELECT
           m.mes,
