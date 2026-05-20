@@ -10,27 +10,6 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejec
 // ── SEGURIDAD: tipos válidos de ocupación ───────────────────
 const TIPOS_VALIDOS = ['H', 'R', 'G', 'P'];
 
-function requireAdminKey(req, res, next) {
-  const key = req.headers['x-admin-key'];
-
-  if (!process.env.ADMIN_API_KEY) {
-    console.error('ADMIN_API_KEY no configurada');
-    return res.status(500).json({
-      ok: false,
-      error: 'Configuración de seguridad incompleta'
-    });
-  }
-
-  if (!key || key !== process.env.ADMIN_API_KEY) {
-    return res.status(403).json({
-      ok: false,
-      error: 'Acceso no autorizado'
-    });
-  }
-
-  next();
-}
-
 // ── Helpers ─────────────────────────────────────────────────
 function extraerEdificio(unidad) {
   if (!unidad) return 'X';
@@ -82,7 +61,7 @@ const CAMPOS_AUDITABLES = {
 };
 
 // ── 1. GET /api/inhouse — lista con filtros ─────────────────
-router.get('/', requireAdminKey, async (req,res) => {
+router.get('/', async (req, res) => {
   try {
     const { estado, edificio, tipo, pm, q, fecha_inicio, fecha_fin, limit = 100, offset = 0 } = req.query;
 
@@ -146,7 +125,7 @@ router.get('/', requireAdminKey, async (req,res) => {
 });
 
 // ── 2. GET /api/inhouse/ocupacion ───────────────────────────
-router.get('/ocupacion', requireAdminKey, async (req, res) => {
+router.get('/ocupacion', async (req, res) => {
   try {
     const [hoy, totales, porTipoHoy] = await Promise.all([
       pool.query(`
@@ -193,7 +172,7 @@ router.get('/ocupacion', requireAdminKey, async (req, res) => {
 });
 
 // ── 3. GET /api/inhouse/hoy ─────────────────────────────────
-router.get('/hoy', requireAdminKey , async (req, res) => {
+router.get('/hoy', async (req, res) => {
   try {
     const [ins, outs] = await Promise.all([
       pool.query(`SELECT r.*, pm.nombre AS property_manager FROM inhouse_registros r LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id WHERE r.fecha_ingreso = CURRENT_DATE ORDER BY r.unidad`),
@@ -216,43 +195,24 @@ router.get('/managers', async (req, res) => {
 });
 
 // ── 4b. POST /api/inhouse/managers ──────────────────────────
-router.post('/managers', requireAdminKey, async (req, res) => {
+router.post('/managers', async (req, res) => {
   try {
     const { nombre, email, telefono } = req.body;
-
     if (!nombre || !nombre.trim()) {
-      return res.status(400).json({
-        ok: false,
-        error: 'El nombre es requerido'
-      });
+      return res.status(400).json({ ok: false, error: 'El nombre es requerido' });
     }
-
     const r = await pool.query(
-      `INSERT INTO inhouse_property_managers (nombre, email, telefono)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [
-        nombre.trim().substring(0, 200),
-        email || null,
-        telefono || null
-      ]
+      `INSERT INTO inhouse_property_managers (nombre, email, telefono) VALUES ($1, $2, $3) RETURNING *`,
+      [nombre.trim().substring(0, 200), email || null, telefono || null]
     );
-
-    res.status(201).json({
-      ok: true,
-      data: r.rows[0]
-    });
-
+    res.status(201).json({ ok: true, data: r.rows[0] });
   } catch (err) {
-    res.status(500).json({
-      ok: false,
-      error: 'Error interno del servidor'
-    });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
 // ── 4c. PUT /api/inhouse/managers/:id ───────────────────────
-router.put('/managers/:id', requireAdminKey, async (req, res) => {
+router.put('/managers/:id', async (req, res) => {
   try {
     const { nombre, email, telefono, activo } = req.body;
     const r = await pool.query(
@@ -273,7 +233,7 @@ router.put('/managers/:id', requireAdminKey, async (req, res) => {
 });
 
 // ── 5. GET /api/inhouse/estadisticas/mensuales ──────────────
-router.get('/estadisticas/mensuales', requireAdminKey, async (req, res) => {
+router.get('/estadisticas/mensuales', async (req, res) => {
   try {
     const anio = parseInt(req.query.anio) || new Date().getFullYear();
 
@@ -318,7 +278,7 @@ router.get('/estadisticas/mensuales', requireAdminKey, async (req, res) => {
 });
 
 // ── 6. GET /api/inhouse/:id ──────────────────────────────────
-router.get('/:id', requireAdminKey, async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const r = await pool.query(`
       SELECT r.*, pm.nombre AS property_manager,
@@ -437,15 +397,16 @@ router.post('/', async (req, res) => {
 });
 
 // ── 8. PUT /api/inhouse/:id — editar con historial ──────────
-router.put('/:id', requireAdminKey, async (req, res) => {
+router.put('/:id', async (req, res) => {
   const client = await pool.connect();
   try {
-   const {
-  unidad, tipo, property_manager_id,
-  nombre_huesped, email, telefono, direccion,
-  fecha_ingreso, fecha_salida, num_personas,
-  interesado_comprar, recibir_info, notas
-  } = req.body;
+    const {
+      unidad, tipo, property_manager_id,
+      nombre_huesped, email, telefono, direccion,
+      fecha_ingreso, fecha_salida, num_personas,
+      interesado_comprar, recibir_info, notas,
+      usuario_id, usuario_nombre
+    } = req.body;
 
     // ── SEGURIDAD: validar tipo si viene en el body ─────────
     if (tipo && !TIPOS_VALIDOS.includes(tipo)) {
@@ -516,14 +477,14 @@ router.put('/:id', requireAdminKey, async (req, res) => {
       const valorDespues = valorNuevo !== null ? valorNuevo.toString() : null;
       if (valorAntes !== valorDespues) {
         await guardarHistorial(client, {
-           registro_id:    req.params.id,
-           usuario_id:     null,
-           usuario_nombre: 'Administración',
-           accion:         'editar',
-           campo:          CAMPOS_AUDITABLES[campo] || campo,
-           valor_antes:    valorAntes,
-           valor_despues:  valorDespues
-         });
+          registro_id:    req.params.id,
+          usuario_id:     usuario_id || null,
+          usuario_nombre: usuario_nombre || 'Administración',
+          accion:         'editar',
+          campo:          CAMPOS_AUDITABLES[campo] || campo,
+          valor_antes:    valorAntes,
+          valor_despues:  valorDespues
+        });
       }
     }
 
@@ -538,68 +499,32 @@ router.put('/:id', requireAdminKey, async (req, res) => {
 });
 
 // ── 9. DELETE /api/inhouse/:id — eliminar con historial ─────
-router.delete('/:id', requireAdminKey, async (req, res) => {
+router.delete('/:id', async (req, res) => {
   const client = await pool.connect();
-
   try {
-    const usuario_id = null;
-    const usuario_nombre = 'Administración';
+    const { usuario_id, usuario_nombre } = req.query;
 
     const ant = await client.query(
-      `SELECT unidad, nombre_huesped
-       FROM inhouse_registros
-       WHERE id = $1`,
-      [req.params.id]
+      `SELECT unidad, nombre_huesped FROM inhouse_registros WHERE id = $1`, [req.params.id]
     );
-
-    if (!ant.rows.length) {
-      return res.status(404).json({
-        ok: false,
-        error: 'No encontrado'
-      });
-    }
+    if (!ant.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
 
     await client.query('BEGIN');
 
     await client.query(`
       INSERT INTO inhouse_historial
-        (
-          registro_id,
-          usuario_id,
-          usuario_nombre,
-          accion,
-          campo,
-          valor_antes,
-          valor_despues
-        )
+        (registro_id, usuario_id, usuario_nombre, accion, campo, valor_antes, valor_despues)
       VALUES ($1, $2, $3, 'eliminar', NULL, $4, NULL)
-    `, [
-      req.params.id,
-      usuario_id,
-      usuario_nombre,
-      `${ant.rows[0].unidad} · ${ant.rows[0].nombre_huesped}`
-    ]);
+    `, [req.params.id, usuario_id || null, usuario_nombre || 'Administración',
+        `${ant.rows[0].unidad} · ${ant.rows[0].nombre_huesped}`]);
 
-    await client.query(
-      `DELETE FROM inhouse_registros WHERE id = $1`,
-      [req.params.id]
-    );
-
+    await client.query(`DELETE FROM inhouse_registros WHERE id = $1`, [req.params.id]);
     await client.query('COMMIT');
 
-    res.json({
-      ok: true,
-      deleted: req.params.id
-    });
-
+    res.json({ ok: true, deleted: req.params.id });
   } catch (err) {
     await client.query('ROLLBACK');
-
-    res.status(500).json({
-      ok: false,
-      error: 'Error interno del servidor'
-    });
-
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   } finally {
     client.release();
   }
