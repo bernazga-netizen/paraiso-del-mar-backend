@@ -1,18 +1,22 @@
 // ============================================================
-// routes-auth.js — Autenticación usuarios Inhouse
-// Paraíso del Mar
+// routes-auth.js — hardening fase 1
 // ============================================================
-const express  = require('express');
-const router   = express.Router();
-const bcrypt   = require('bcryptjs');
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
-// ── Helpers de validación ────────────────────────────────────
+// ------------------------------------------------------------
+// helpers
+// ------------------------------------------------------------
 function validarPassword(password) {
   if (!password || typeof password !== 'string') return 'La contraseña es requerida';
-  if (password.length < 6)   return 'La contraseña debe tener al menos 6 caracteres';
+  if (password.length < 6) return 'La contraseña debe tener al menos 6 caracteres';
   if (password.length > 100) return 'Contraseña demasiado larga';
   return null;
 }
@@ -22,138 +26,220 @@ function sanitizarNombre(nombre) {
   return nombre.trim().substring(0, 100);
 }
 
-// ── POST /api/auth/setup-password ───────────────────────────
-router.post('/setup-password', async (req, res) => {
-  try {
-    const nombre   = sanitizarNombre(req.body.nombre);
-    const password = req.body.password;
+function requireAdminKey(req, res, next) {
+  const key = req.headers['x-admin-key'];
 
-    if (!nombre) return res.status(400).json({ ok: false, error: 'nombre es requerido' });
-
-    const errPass = validarPassword(password);
-    if (errPass) return res.status(400).json({ ok: false, error: errPass });
-
-    const user = await pool.query(
-      `SELECT * FROM inhouse_usuarios WHERE nombre ILIKE $1 AND activo = TRUE`, [nombre]
-    );
-    if (!user.rows.length) {
-      return res.status(404).json({ ok: false, error: 'Usuario no encontrado' });
-    }
-    if (user.rows[0].password_hash) {
-      return res.status(400).json({ ok: false, error: 'Este usuario ya tiene contraseña configurada' });
-    }
-
-    const hash = await bcrypt.hash(password, 10);
-    await pool.query(
-      `UPDATE inhouse_usuarios SET password_hash = $1 WHERE id = $2`,
-      [hash, user.rows[0].id]
-    );
-    res.json({ ok: true, mensaje: 'Contraseña configurada correctamente' });
-  } catch (err) {
-    console.error('setup-password:', err);
-    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  if (!process.env.ADMIN_API_KEY) {
+    console.error('ADMIN_API_KEY no configurada');
+    return res.status(500).json({
+      ok: false,
+      error: 'Configuración de seguridad incompleta'
+    });
   }
+
+  if (!key || key !== process.env.ADMIN_API_KEY) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Acceso no autorizado'
+    });
+  }
+
+  next();
+}
+
+// ------------------------------------------------------------
+// setup-password BLOQUEADO
+// ------------------------------------------------------------
+router.post('/setup-password', async (req, res) => {
+  return res.status(403).json({
+    ok: false,
+    error: 'Endpoint deshabilitado por seguridad'
+  });
 });
 
-// ── POST /api/auth/login ─────────────────────────────────────
-// Nota: el rate limiting (20 intentos / 15 min) se aplica en server.js
+// ------------------------------------------------------------
+// login (sin romper frontend actual)
+// ------------------------------------------------------------
 router.post('/login', async (req, res) => {
   try {
-    const nombre   = sanitizarNombre(req.body.nombre);
+    const nombre = sanitizarNombre(req.body.nombre);
     const password = req.body.password;
 
     if (!nombre || !password) {
-      return res.status(400).json({ ok: false, error: 'nombre y password son requeridos' });
+      return res.status(400).json({
+        ok: false,
+        error: 'nombre y password son requeridos'
+      });
     }
+
     if (typeof password !== 'string' || password.length > 100) {
-      return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+      return res.status(400).json({
+        ok: false,
+        error: 'Datos inválidos'
+      });
     }
 
     const user = await pool.query(
-      `SELECT * FROM inhouse_usuarios WHERE nombre ILIKE $1 AND activo = TRUE`, [nombre]
+      `SELECT * FROM inhouse_usuarios
+       WHERE nombre ILIKE $1
+       AND activo = TRUE`,
+      [nombre]
     );
 
-    // Respuesta genérica para no revelar si el usuario existe
     if (!user.rows.length) {
-      return res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos' });
+      return res.status(401).json({
+        ok: false,
+        error: 'Usuario o contraseña incorrectos'
+      });
     }
 
     const u = user.rows[0];
 
     if (!u.password_hash) {
-      return res.status(401).json({ ok: false, error: 'Este usuario aún no tiene contraseña configurada', codigo: 'SIN_PASSWORD' });
+      return res.status(401).json({
+        ok: false,
+        error: 'Cuenta sin contraseña configurada'
+      });
     }
 
     const match = await bcrypt.compare(password, u.password_hash);
+
     if (!match) {
-      return res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos' });
+      return res.status(401).json({
+        ok: false,
+        error: 'Usuario o contraseña incorrectos'
+      });
     }
 
     await pool.query(
-      `UPDATE inhouse_usuarios SET last_login = NOW() WHERE id = $1`, [u.id]
+      `UPDATE inhouse_usuarios
+       SET last_login = NOW()
+       WHERE id = $1`,
+      [u.id]
     );
 
     res.json({
       ok: true,
       usuario: {
-        id:     u.id,
+        id: u.id,
         nombre: u.nombre,
-        email:  u.email,
-        rol:    u.rol
+        email: u.email,
+        rol: u.rol
       }
     });
+
   } catch (err) {
     console.error('login:', err);
-    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+    res.status(500).json({
+      ok: false,
+      error: 'Error interno del servidor'
+    });
   }
 });
 
-// ── GET /api/auth/usuarios ───────────────────────────────────
-router.get('/usuarios', async (req, res) => {
+// ------------------------------------------------------------
+// usuarios protegidos
+// ------------------------------------------------------------
+router.get('/usuarios', requireAdminKey, async (req, res) => {
   try {
-    const r = await pool.query(
-      `SELECT id, nombre, email, rol, activo, created_at, last_login,
-              (password_hash IS NOT NULL) AS tiene_password
-       FROM inhouse_usuarios ORDER BY nombre`
-    );
-    res.json({ ok: true, data: r.rows });
+    const r = await pool.query(`
+      SELECT
+        id,
+        nombre,
+        email,
+        rol,
+        activo,
+        created_at,
+        last_login,
+        (password_hash IS NOT NULL) AS tiene_password
+      FROM inhouse_usuarios
+      ORDER BY nombre
+    `);
+
+    res.json({
+      ok: true,
+      data: r.rows
+    });
+
   } catch (err) {
     console.error('get usuarios:', err);
-    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+    res.status(500).json({
+      ok: false,
+      error: 'Error interno del servidor'
+    });
   }
 });
 
-// ── PUT /api/auth/usuarios/:id/password ─────────────────────
-router.put('/usuarios/:id/password', async (req, res) => {
+// ------------------------------------------------------------
+// cambio password protegido
+// ------------------------------------------------------------
+router.put('/usuarios/:id/password', requireAdminKey, async (req, res) => {
   try {
     const errPass = validarPassword(req.body.password);
-    if (errPass) return res.status(400).json({ ok: false, error: errPass });
+
+    if (errPass) {
+      return res.status(400).json({
+        ok: false,
+        error: errPass
+      });
+    }
 
     const hash = await bcrypt.hash(req.body.password, 10);
+
     await pool.query(
-      `UPDATE inhouse_usuarios SET password_hash = $1 WHERE id = $2`,
+      `UPDATE inhouse_usuarios
+       SET password_hash = $1
+       WHERE id = $2`,
       [hash, req.params.id]
     );
-    res.json({ ok: true, mensaje: 'Contraseña actualizada' });
+
+    res.json({
+      ok: true,
+      mensaje: 'Contraseña actualizada'
+    });
+
   } catch (err) {
     console.error('update password:', err);
-    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+    res.status(500).json({
+      ok: false,
+      error: 'Error interno del servidor'
+    });
   }
 });
 
-// ── PUT /api/auth/usuarios/:id ───────────────────────────────
-router.put('/usuarios/:id', async (req, res) => {
+// ------------------------------------------------------------
+// activar/desactivar protegido
+// ------------------------------------------------------------
+router.put('/usuarios/:id', requireAdminKey, async (req, res) => {
   try {
     const { activo } = req.body;
+
     const r = await pool.query(
-      `UPDATE inhouse_usuarios SET activo = $1 WHERE id = $2 RETURNING id, nombre, activo`,
+      `UPDATE inhouse_usuarios
+       SET activo = $1
+       WHERE id = $2
+       RETURNING id, nombre, activo`,
       [activo, req.params.id]
     );
-    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
-    res.json({ ok: true, data: r.rows[0] });
+
+    if (!r.rows.length) {
+      return res.status(404).json({
+        ok: false,
+        error: 'No encontrado'
+      });
+    }
+
+    res.json({
+      ok: true,
+      data: r.rows[0]
+    });
+
   } catch (err) {
     console.error('toggle usuario:', err);
-    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+    res.status(500).json({
+      ok: false,
+      error: 'Error interno del servidor'
+    });
   }
 });
 
