@@ -7,6 +7,9 @@ const { Pool } = require('pg');
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
+// ── SEGURIDAD: tipos válidos de ocupación ───────────────────
+const TIPOS_VALIDOS = ['H', 'R', 'G', 'P'];
+
 // ── Helpers ─────────────────────────────────────────────────
 function extraerEdificio(unidad) {
   if (!unidad) return 'X';
@@ -66,7 +69,6 @@ router.get('/', async (req, res) => {
     const params = [];
     let p = 1;
 
-    // Filtro por estado (se omite si hay filtro de fechas)
     if (!fecha_inicio && !fecha_fin) {
       if (estado === 'activo') {
         where.push(`r.fecha_ingreso <= CURRENT_DATE AND (r.fecha_salida IS NULL OR r.fecha_salida >= CURRENT_DATE)`);
@@ -77,24 +79,13 @@ router.get('/', async (req, res) => {
       }
     }
 
-    // Filtro de rango de fechas: registros activos durante el período
-    // Check-in <= fecha_fin  Y  (Check-out IS NULL OR Check-out >= fecha_inicio)
-    if (fecha_inicio) {
-      where.push(`(r.fecha_salida IS NULL OR r.fecha_salida >= $${p++})`);
-      params.push(fecha_inicio);
-    }
-    if (fecha_fin) {
-      where.push(`r.fecha_ingreso <= $${p++}`);
-      params.push(fecha_fin);
-    }
+    if (fecha_inicio) { where.push(`(r.fecha_salida IS NULL OR r.fecha_salida >= $${p++})`); params.push(fecha_inicio); }
+    if (fecha_fin)    { where.push(`r.fecha_ingreso <= $${p++}`); params.push(fecha_fin); }
 
     if (edificio) { where.push(`r.edificio = $${p++}`);            params.push(edificio); }
-    if (tipo)     { where.push(`r.tipo = $${p++}`);                params.push(tipo); }
+    if (tipo && TIPOS_VALIDOS.includes(tipo)) { where.push(`r.tipo = $${p++}`); params.push(tipo); }
     if (pm)       { where.push(`r.property_manager_id = $${p++}`); params.push(parseInt(pm)); }
-    if (q)        {
-      where.push(`(r.nombre_huesped ILIKE $${p} OR r.unidad ILIKE $${p})`);
-      params.push(`%${q}%`); p++;
-    }
+    if (q)        { where.push(`(r.nombre_huesped ILIKE $${p} OR r.unidad ILIKE $${p})`); params.push(`%${q}%`); p++; }
 
     const whereStr = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
@@ -129,7 +120,7 @@ router.get('/', async (req, res) => {
     res.json({ ok: true, data: result.rows, total: result.rowCount });
   } catch (err) {
     console.error('GET /inhouse:', err);
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
@@ -174,10 +165,9 @@ router.get('/ocupacion', async (req, res) => {
         GROUP BY tipo ORDER BY tipo
       `)
     ]);
-
     res.json({ ok: true, por_edificio: hoy.rows, totales: totales.rows[0], por_tipo_hoy: porTipoHoy.rows });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
@@ -185,22 +175,12 @@ router.get('/ocupacion', async (req, res) => {
 router.get('/hoy', async (req, res) => {
   try {
     const [ins, outs] = await Promise.all([
-      pool.query(`
-        SELECT r.*, pm.nombre AS property_manager
-        FROM inhouse_registros r
-        LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id
-        WHERE r.fecha_ingreso = CURRENT_DATE ORDER BY r.unidad
-      `),
-      pool.query(`
-        SELECT r.*, pm.nombre AS property_manager
-        FROM inhouse_registros r
-        LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id
-        WHERE r.fecha_salida = CURRENT_DATE ORDER BY r.unidad
-      `)
+      pool.query(`SELECT r.*, pm.nombre AS property_manager FROM inhouse_registros r LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id WHERE r.fecha_ingreso = CURRENT_DATE ORDER BY r.unidad`),
+      pool.query(`SELECT r.*, pm.nombre AS property_manager FROM inhouse_registros r LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id WHERE r.fecha_salida = CURRENT_DATE ORDER BY r.unidad`)
     ]);
     res.json({ ok: true, check_ins: ins.rows, check_outs: outs.rows });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
@@ -210,7 +190,7 @@ router.get('/managers', async (req, res) => {
     const r = await pool.query(`SELECT * FROM inhouse_property_managers ORDER BY nombre`);
     res.json({ ok: true, data: r.rows });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
@@ -222,13 +202,12 @@ router.post('/managers', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'El nombre es requerido' });
     }
     const r = await pool.query(
-      `INSERT INTO inhouse_property_managers (nombre, email, telefono)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [nombre.trim(), email || null, telefono || null]
+      `INSERT INTO inhouse_property_managers (nombre, email, telefono) VALUES ($1, $2, $3) RETURNING *`,
+      [nombre.trim().substring(0, 200), email || null, telefono || null]
     );
     res.status(201).json({ ok: true, data: r.rows[0] });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
@@ -249,51 +228,27 @@ router.put('/managers/:id', async (req, res) => {
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
     res.json({ ok: true, data: r.rows[0] });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
 // ── 5. GET /api/inhouse/estadisticas/mensuales ──────────────
-// IMPORTANTE: debe ir ANTES de /:id
 router.get('/estadisticas/mensuales', async (req, res) => {
   try {
     const anio = parseInt(req.query.anio) || new Date().getFullYear();
 
     const [checkins, checkouts, ocupacion] = await Promise.all([
+      pool.query(`SELECT EXTRACT(MONTH FROM fecha_ingreso)::int AS mes, COUNT(*) AS total, SUM(num_personas) AS personas FROM inhouse_registros WHERE EXTRACT(YEAR FROM fecha_ingreso) = $1 GROUP BY mes ORDER BY mes`, [anio]),
+      pool.query(`SELECT EXTRACT(MONTH FROM fecha_salida)::int AS mes, COUNT(*) AS total, SUM(num_personas) AS personas FROM inhouse_registros WHERE fecha_salida IS NOT NULL AND EXTRACT(YEAR FROM fecha_salida) = $1 GROUP BY mes ORDER BY mes`, [anio]),
       pool.query(`
-        SELECT
-          EXTRACT(MONTH FROM fecha_ingreso)::int AS mes,
-          COUNT(*) AS total,
-          SUM(num_personas) AS personas
-        FROM inhouse_registros
-        WHERE EXTRACT(YEAR FROM fecha_ingreso) = $1
-        GROUP BY mes ORDER BY mes
-      `, [anio]),
-      pool.query(`
-        SELECT
-          EXTRACT(MONTH FROM fecha_salida)::int AS mes,
-          COUNT(*) AS total,
-          SUM(num_personas) AS personas
-        FROM inhouse_registros
-        WHERE fecha_salida IS NOT NULL
-          AND EXTRACT(YEAR FROM fecha_salida) = $1
-        GROUP BY mes ORDER BY mes
-      `, [anio]),
-      pool.query(`
-        SELECT
-          m.mes,
-          COUNT(r.id) AS registros_activos,
-          COALESCE(SUM(r.num_personas), 0) AS personas_total
+        SELECT m.mes, COUNT(r.id) AS registros_activos, COALESCE(SUM(r.num_personas), 0) AS personas_total
         FROM generate_series(1, 12) AS m(mes)
         LEFT JOIN inhouse_registros r ON (
           EXTRACT(YEAR FROM r.fecha_ingreso) <= $1
           AND (r.fecha_salida IS NULL OR EXTRACT(YEAR FROM r.fecha_salida) >= $1)
           AND EXTRACT(MONTH FROM r.fecha_ingreso) <= m.mes
           AND (r.fecha_salida IS NULL OR EXTRACT(MONTH FROM r.fecha_salida) >= m.mes)
-          AND (
-            EXTRACT(YEAR FROM r.fecha_ingreso) < $1
-            OR EXTRACT(MONTH FROM r.fecha_ingreso) <= m.mes
-          )
+          AND (EXTRACT(YEAR FROM r.fecha_ingreso) < $1 OR EXTRACT(MONTH FROM r.fecha_ingreso) <= m.mes)
         )
         GROUP BY m.mes ORDER BY m.mes
       `, [anio])
@@ -302,9 +257,9 @@ router.get('/estadisticas/mensuales', async (req, res) => {
     const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
     const data = meses.map((nombre, i) => {
       const mes = i + 1;
-      const ci  = checkins.rows.find(r => r.mes === mes);
-      const co  = checkouts.rows.find(r => r.mes === mes);
-      const oc  = ocupacion.rows.find(r => parseInt(r.mes) === mes);
+      const ci = checkins.rows.find(r => r.mes === mes);
+      const co = checkouts.rows.find(r => r.mes === mes);
+      const oc = ocupacion.rows.find(r => parseInt(r.mes) === mes);
       return {
         mes: nombre,
         checkins:    ci ? parseInt(ci.total) : 0,
@@ -318,7 +273,7 @@ router.get('/estadisticas/mensuales', async (req, res) => {
 
     res.json({ ok: true, anio, data });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
@@ -328,19 +283,17 @@ router.get('/:id', async (req, res) => {
     const r = await pool.query(`
       SELECT r.*, pm.nombre AS property_manager,
         COALESCE(
-          (SELECT json_agg(a ORDER BY a.orden)
-           FROM inhouse_acompanantes a WHERE a.registro_id = r.id),
+          (SELECT json_agg(a ORDER BY a.orden) FROM inhouse_acompanantes a WHERE a.registro_id = r.id),
           '[]'
         ) AS acompanantes
       FROM inhouse_registros r
       LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id
       WHERE r.id = $1
     `, [req.params.id]);
-
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
     res.json({ ok: true, data: r.rows[0] });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
@@ -358,8 +311,18 @@ router.post('/', async (req, res) => {
       notas, registrado_por
     } = req.body;
 
+    // ── SEGURIDAD: validaciones de entrada ──────────────────
     if (!unidad || !nombre_huesped || !fecha_ingreso) {
       return res.status(400).json({ ok: false, error: 'unidad, nombre_huesped y fecha_ingreso son requeridos' });
+    }
+    if (!TIPOS_VALIDOS.includes(tipo)) {
+      return res.status(400).json({ ok: false, error: 'Tipo de ocupación no válido' });
+    }
+    if (nombre_huesped.length > 300) {
+      return res.status(400).json({ ok: false, error: 'Nombre demasiado largo' });
+    }
+    if (unidad.length > 50) {
+      return res.status(400).json({ ok: false, error: 'Unidad inválida' });
     }
 
     const traslape = await verificarTraslape(unidad, fecha_ingreso, fecha_salida);
@@ -395,13 +358,17 @@ router.post('/', async (req, res) => {
 
     const registro = ins.rows[0];
 
-    if (acompanantes.length > 0) {
-      const vals = acompanantes
-        .filter(n => n && n.trim())
-        .map((nombre, i) => `('${registro.id}', '${nombre.replace(/'/g, "''")}', ${i + 1})`);
-      if (vals.length > 0) {
-        await client.query(`INSERT INTO inhouse_acompanantes (registro_id, nombre, orden) VALUES ${vals.join(',')}`);
-      }
+    // ── SEGURIDAD: acompañantes con query parametrizada ─────
+    const acompsLimpios = acompanantes
+      .filter(n => n && typeof n === 'string' && n.trim())
+      .slice(0, 8)
+      .map(n => n.trim().substring(0, 200));
+
+    for (let i = 0; i < acompsLimpios.length; i++) {
+      await client.query(
+        `INSERT INTO inhouse_acompanantes (registro_id, nombre, orden) VALUES ($1, $2, $3)`,
+        [registro.id, acompsLimpios[i], i + 1]
+      );
     }
 
     await guardarHistorial(client, {
@@ -423,7 +390,7 @@ router.post('/', async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('POST /inhouse:', err);
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   } finally {
     client.release();
   }
@@ -441,6 +408,11 @@ router.put('/:id', async (req, res) => {
       usuario_id, usuario_nombre
     } = req.body;
 
+    // ── SEGURIDAD: validar tipo si viene en el body ─────────
+    if (tipo && !TIPOS_VALIDOS.includes(tipo)) {
+      return res.status(400).json({ ok: false, error: 'Tipo de ocupación no válido' });
+    }
+
     if (unidad && fecha_ingreso) {
       const traslape = await verificarTraslape(unidad, fecha_ingreso, fecha_salida, req.params.id);
       if (traslape) {
@@ -455,9 +427,7 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    const anterior = await client.query(
-      `SELECT * FROM inhouse_registros WHERE id = $1`, [req.params.id]
-    );
+    const anterior = await client.query(`SELECT * FROM inhouse_registros WHERE id = $1`, [req.params.id]);
     if (!anterior.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
     const ant = anterior.rows[0];
 
@@ -505,7 +475,6 @@ router.put('/:id', async (req, res) => {
           : ant[campo].toString()
         : null;
       const valorDespues = valorNuevo !== null ? valorNuevo.toString() : null;
-
       if (valorAntes !== valorDespues) {
         await guardarHistorial(client, {
           registro_id:    req.params.id,
@@ -523,7 +492,7 @@ router.put('/:id', async (req, res) => {
     res.json({ ok: true, data: nuevo });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   } finally {
     client.release();
   }
@@ -555,7 +524,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ ok: true, deleted: req.params.id });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   } finally {
     client.release();
   }
