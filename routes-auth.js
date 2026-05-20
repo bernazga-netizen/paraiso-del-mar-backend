@@ -9,17 +9,29 @@ const { Pool } = require('pg');
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-// ── POST /api/auth/setup-password — configurar contraseña inicial ──
-// Solo funciona si el usuario no tiene contraseña aún
+// ── Helpers de validación ────────────────────────────────────
+function validarPassword(password) {
+  if (!password || typeof password !== 'string') return 'La contraseña es requerida';
+  if (password.length < 6)   return 'La contraseña debe tener al menos 6 caracteres';
+  if (password.length > 100) return 'Contraseña demasiado larga';
+  return null;
+}
+
+function sanitizarNombre(nombre) {
+  if (!nombre || typeof nombre !== 'string') return null;
+  return nombre.trim().substring(0, 100);
+}
+
+// ── POST /api/auth/setup-password ───────────────────────────
 router.post('/setup-password', async (req, res) => {
   try {
-    const { nombre, password } = req.body;
-    if (!nombre || !password) {
-      return res.status(400).json({ ok: false, error: 'nombre y password son requeridos' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ ok: false, error: 'La contraseña debe tener al menos 6 caracteres' });
-    }
+    const nombre   = sanitizarNombre(req.body.nombre);
+    const password = req.body.password;
+
+    if (!nombre) return res.status(400).json({ ok: false, error: 'nombre es requerido' });
+
+    const errPass = validarPassword(password);
+    if (errPass) return res.status(400).json({ ok: false, error: errPass });
 
     const user = await pool.query(
       `SELECT * FROM inhouse_usuarios WHERE nombre ILIKE $1 AND activo = TRUE`, [nombre]
@@ -38,22 +50,30 @@ router.post('/setup-password', async (req, res) => {
     );
     res.json({ ok: true, mensaje: 'Contraseña configurada correctamente' });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    console.error('setup-password:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
 // ── POST /api/auth/login ─────────────────────────────────────
+// Nota: el rate limiting (20 intentos / 15 min) se aplica en server.js
 router.post('/login', async (req, res) => {
   try {
-    const { nombre, password } = req.body;
+    const nombre   = sanitizarNombre(req.body.nombre);
+    const password = req.body.password;
+
     if (!nombre || !password) {
       return res.status(400).json({ ok: false, error: 'nombre y password son requeridos' });
+    }
+    if (typeof password !== 'string' || password.length > 100) {
+      return res.status(400).json({ ok: false, error: 'Datos inválidos' });
     }
 
     const user = await pool.query(
       `SELECT * FROM inhouse_usuarios WHERE nombre ILIKE $1 AND activo = TRUE`, [nombre]
     );
 
+    // Respuesta genérica para no revelar si el usuario existe
     if (!user.rows.length) {
       return res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos' });
     }
@@ -69,12 +89,10 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos' });
     }
 
-    // Actualizar último login
     await pool.query(
       `UPDATE inhouse_usuarios SET last_login = NOW() WHERE id = $1`, [u.id]
     );
 
-    // Devolver datos del usuario (sin password_hash)
     res.json({
       ok: true,
       usuario: {
@@ -85,11 +103,12 @@ router.post('/login', async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    console.error('login:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
-// ── GET /api/auth/usuarios — lista usuarios (solo admin) ─────
+// ── GET /api/auth/usuarios ───────────────────────────────────
 router.get('/usuarios', async (req, res) => {
   try {
     const r = await pool.query(
@@ -99,28 +118,30 @@ router.get('/usuarios', async (req, res) => {
     );
     res.json({ ok: true, data: r.rows });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    console.error('get usuarios:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
-// ── PUT /api/auth/usuarios/:id/password — cambiar contraseña ─
+// ── PUT /api/auth/usuarios/:id/password ─────────────────────
 router.put('/usuarios/:id/password', async (req, res) => {
   try {
-    const { password } = req.body;
-    if (!password || password.length < 6) {
-      return res.status(400).json({ ok: false, error: 'La contraseña debe tener al menos 6 caracteres' });
-    }
-    const hash = await bcrypt.hash(password, 10);
+    const errPass = validarPassword(req.body.password);
+    if (errPass) return res.status(400).json({ ok: false, error: errPass });
+
+    const hash = await bcrypt.hash(req.body.password, 10);
     await pool.query(
-      `UPDATE inhouse_usuarios SET password_hash = $1 WHERE id = $2`, [hash, req.params.id]
+      `UPDATE inhouse_usuarios SET password_hash = $1 WHERE id = $2`,
+      [hash, req.params.id]
     );
     res.json({ ok: true, mensaje: 'Contraseña actualizada' });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    console.error('update password:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
-// ── PUT /api/auth/usuarios/:id — activar/desactivar usuario ──
+// ── PUT /api/auth/usuarios/:id ───────────────────────────────
 router.put('/usuarios/:id', async (req, res) => {
   try {
     const { activo } = req.body;
@@ -131,7 +152,8 @@ router.put('/usuarios/:id', async (req, res) => {
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
     res.json({ ok: true, data: r.rows[0] });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    console.error('toggle usuario:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
 
