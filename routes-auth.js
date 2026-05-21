@@ -166,7 +166,7 @@ router.put('/usuarios/:id', verifyToken, async (req, res) => {
   }
 });
 
-// ── GET /api/auth/usuarios-publico (sin JWT) ─────────────────
+// ── GET /api/auth/usuarios-publico — solo nombres para login ──
 router.get('/usuarios-publico', async (req, res) => {
   try {
     const r = await pool.query(

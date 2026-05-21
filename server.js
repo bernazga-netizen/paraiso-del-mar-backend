@@ -80,6 +80,7 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// ── Ruta de prueba — solo dashboard (requiere JWT) ──────────────────────────
 app.get('/api/test/crear-muestra', verifyToken, async (req, res) => {
   try {
     const accesos = ['Muelle Principal', 'Base 4', 'Base 1'];
@@ -104,7 +105,8 @@ app.get('/api/test/crear-muestra', verifyToken, async (req, res) => {
   }
 });
 
-app.post('/api/registros', verifyToken, async (req, res) => {
+// ── Rutas de tablets — SIN JWT (autenticación por PIN en frontend) ───────────
+app.post('/api/registros', async (req, res) => {
     try {
         const { fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura } = req.body;
 
@@ -147,7 +149,7 @@ app.post('/api/registros', verifyToken, async (req, res) => {
     }
 });
 
-app.get('/api/estadisticas/:fecha', verifyToken, async (req, res) => {
+app.get('/api/estadisticas/:fecha', async (req, res) => {
     try {
         const { fecha } = req.params;
 
@@ -189,6 +191,7 @@ app.get('/api/estadisticas/:fecha', verifyToken, async (req, res) => {
     }
 });
 
+// ── Rutas de dashboard — CON JWT ─────────────────────────────────────────────
 app.get('/api/registros', verifyToken, async (req, res) => {
     try {
         const { fecha, acceso, tipo_persona } = req.query;
