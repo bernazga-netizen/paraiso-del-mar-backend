@@ -166,4 +166,15 @@ router.put('/usuarios/:id', verifyToken, async (req, res) => {
   }
 });
 
+// ── GET /api/auth/usuarios-publico — solo nombres para login ──
+router.get('/usuarios-publico', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT nombre FROM inhouse_usuarios WHERE activo = TRUE ORDER BY nombre`
+    );
+    res.json({ ok: true, data: r.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'Error interno' });
+  }
+});
 module.exports = router;
