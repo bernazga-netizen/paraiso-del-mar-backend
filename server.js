@@ -5,6 +5,10 @@ const http = require('http');
 const socketIo = require('socket.io');
 require('dotenv').config();
 
+const { verifyToken } = require('./middlewares/auth');
+const authRouter     = require('./routes-auth');
+const historialRouter = require('./routes-historial');
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: '*' } });
@@ -16,6 +20,9 @@ const pool = new Pool({
 
 app.use(cors());
 app.use(express.json());
+
+app.use('/api/auth',      authRouter);
+app.use('/api/historial', historialRouter);
 
 // Crear tabla de auditoría si no existe
 pool.query(`
@@ -44,7 +51,7 @@ app.get('/health', async (req, res) => {
   }
 });
 
-app.get('/api/test/crear-muestra', async (req, res) => {
+app.get('/api/test/crear-muestra', verifyToken, async (req, res) => {
   try {
     const accesos = ['Muelle Principal', 'Base 4', 'Base 1'];
     const tipos = ['Dueño', 'Rentista', 'Golfista', 'Restaurante', 'Proveedor', 'Empleado', 'Administrativo'];
@@ -68,7 +75,7 @@ app.get('/api/test/crear-muestra', async (req, res) => {
   }
 });
 
-app.post('/api/registros', async (req, res) => {
+app.post('/api/registros', verifyToken, async (req, res) => {
     try {
         const { fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura } = req.body;
 
@@ -111,7 +118,7 @@ app.post('/api/registros', async (req, res) => {
     }
 });
 
-app.get('/api/estadisticas/:fecha', async (req, res) => {
+app.get('/api/estadisticas/:fecha', verifyToken, async (req, res) => {
     try {
         const { fecha } = req.params;
 
@@ -153,7 +160,7 @@ app.get('/api/estadisticas/:fecha', async (req, res) => {
     }
 });
 
-app.get('/api/registros', async (req, res) => {
+app.get('/api/registros', verifyToken, async (req, res) => {
     try {
         const { fecha, acceso, tipo_persona } = req.query;
         let query = 'SELECT * FROM registros WHERE 1=1';
@@ -188,7 +195,7 @@ app.get('/api/registros', async (req, res) => {
     }
 });
 
-app.get('/api/auditoria', async (req, res) => {
+app.get('/api/auditoria', verifyToken, async (req, res) => {
     try {
         const { fecha_inicio, fecha_fin, acceso, tipo_persona, usuario_captura } = req.query;
         let query = 'SELECT * FROM auditoria WHERE 1=1';
