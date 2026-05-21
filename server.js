@@ -15,6 +15,7 @@ const io = socketIo(server, {
   cors: {
     origin: [
       'https://paraiso-del-mar-app-web.vercel.app',
+      'https://paraiso-del-mar-dashboard.vercel.app',
       'http://localhost:3000',
       'http://localhost:5500'
     ],
@@ -29,6 +30,7 @@ const pool = new Pool({
 
 const allowedOrigins = [
   'https://paraiso-del-mar-app-web.vercel.app',
+  'https://paraiso-del-mar-dashboard.vercel.app',
   'http://localhost:3000',
   'http://localhost:5500'
 ];
