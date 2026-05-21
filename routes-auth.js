@@ -118,7 +118,7 @@ router.post('/login', async (req, res) => {
 });
 
 // ── GET /api/auth/usuarios ───────────────────────────────────
-router.get('/usuarios', verifyToken, async (req, res) => {
+router.get('/usuarios', async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT id, nombre, email, rol, activo, created_at, last_login,
