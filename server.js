@@ -11,14 +11,39 @@ const historialRouter = require('./routes-historial');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, { cors: { origin: '*' } });
+const io = socketIo(server, {
+  cors: {
+    origin: [
+      'https://paraiso-del-mar-app-web.vercel.app',
+      'http://localhost:3000',
+      'http://localhost:5500'
+    ],
+    methods: ['GET', 'POST']
+  }
+});
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-app.use(cors());
+const allowedOrigins = [
+  'https://paraiso-del-mar-app-web.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5500'
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS bloqueado: origen no permitido'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 
 app.use('/api/auth',      authRouter);
