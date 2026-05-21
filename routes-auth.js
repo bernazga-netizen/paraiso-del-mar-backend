@@ -118,7 +118,7 @@ router.post('/login', async (req, res) => {
 });
 
 // ── GET /api/auth/usuarios ───────────────────────────────────
-router.get('/usuarios', async (req, res) => {
+router.get('/usuarios', verifyToken, async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT id, nombre, email, rol, activo, created_at, last_login,
@@ -163,6 +163,18 @@ router.put('/usuarios/:id', verifyToken, async (req, res) => {
   } catch (err) {
     console.error('toggle usuario:', err);
     res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
+// ── GET /api/auth/usuarios-publico (sin JWT) ─────────────────
+router.get('/usuarios-publico', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT nombre FROM inhouse_usuarios WHERE activo = TRUE ORDER BY nombre`
+    );
+    res.json({ ok: true, data: r.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'Error interno' });
   }
 });
 
