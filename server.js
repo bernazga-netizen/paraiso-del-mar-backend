@@ -8,6 +8,7 @@ require('dotenv').config();
 const { verifyToken } = require('./middlewares/auth');
 const authRouter     = require('./routes-auth');
 const historialRouter = require('./routes-historial');
+const inhouseRouter  = require('./routes-inhouse');
 
 const app = express();
 const server = http.createServer(app);
@@ -50,6 +51,7 @@ app.use(express.json());
 
 app.use('/api/auth',      authRouter);
 app.use('/api/historial', historialRouter);
+app.use('/api/inhouse',   inhouseRouter);
 
 // Crear tabla de auditoría si no existe
 pool.query(`

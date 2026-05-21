@@ -4,8 +4,11 @@
 const express  = require('express');
 const router   = express.Router();
 const { Pool } = require('pg');
+const { verifyToken } = require('./middlewares/auth');
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
+router.use(verifyToken);
 
 // ── SEGURIDAD: tipos válidos de ocupación ───────────────────
 const TIPOS_VALIDOS = ['H', 'R', 'G', 'P'];
