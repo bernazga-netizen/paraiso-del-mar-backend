@@ -590,8 +590,8 @@ router.get('/historial-ocupacion', async (req, res) => {
 
     res.json({ ok: true, registros: result.rows });
   } catch (err) {
-    console.error('Error historial-ocupacion:', err);
-    res.status(500).json({ ok: false, error: err.message });
+    console.error('Error historial-ocupacion:', err.message, err.stack);
+    res.status(500).json({ ok: false, error: err.message, detalle: err.stack });
   }
 });
 
