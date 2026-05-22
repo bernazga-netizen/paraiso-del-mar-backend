@@ -533,4 +533,65 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Historial de ocupación con filtros
+router.get('/historial-ocupacion', async (req, res) => {
+  try {
+    const { unidad, edificio, tipo, desde, hasta } = req.query;
+
+    let conditions = [];
+    let values = [];
+    let idx = 1;
+
+    if (unidad) {
+      conditions.push(`unidad = $${idx++}`);
+      values.push(unidad);
+    }
+    if (edificio) {
+      conditions.push(`edificio = $${idx++}`);
+      values.push(edificio);
+    }
+    if (tipo) {
+      conditions.push(`tipo = $${idx++}`);
+      values.push(tipo);
+    }
+    if (desde) {
+      conditions.push(`fecha_ingreso >= $${idx++}`);
+      values.push(desde);
+    }
+    if (hasta) {
+      conditions.push(`fecha_ingreso <= $${idx++}`);
+      values.push(hasta);
+    }
+
+    const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    const result = await pool.query(`
+      SELECT
+        id,
+        unidad,
+        edificio,
+        tipo,
+        nombre_huesped,
+        fecha_ingreso,
+        fecha_salida,
+        (fecha_salida - fecha_ingreso) AS noches,
+        num_personas,
+        property_manager_id,
+        property_manager_nombre,
+        registrado_por,
+        notas,
+        created_at
+      FROM inhouse_registros
+      ${where}
+      ORDER BY fecha_ingreso DESC
+      LIMIT 500
+    `, values);
+
+    res.json({ ok: true, registros: result.rows });
+  } catch (err) {
+    console.error('Error historial-ocupacion:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 module.exports = router;
