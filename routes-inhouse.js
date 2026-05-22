@@ -280,6 +280,70 @@ router.get('/estadisticas/mensuales', async (req, res) => {
   }
 });
 
+// Historial de ocupación con filtros
+router.get('/historial-ocupacion', async (req, res) => {
+  try {
+    const { unidad, edificio, tipo, desde, hasta } = req.query;
+
+    let conditions = [];
+    let values = [];
+    let idx = 1;
+
+    if (unidad) {
+      conditions.push(`unidad = $${idx++}`);
+      values.push(unidad);
+    }
+    if (edificio) {
+      conditions.push(`edificio = $${idx++}`);
+      values.push(edificio);
+    }
+    if (tipo) {
+      conditions.push(`tipo = $${idx++}`);
+      values.push(tipo);
+    }
+    if (desde) {
+      conditions.push(`fecha_ingreso >= $${idx++}`);
+      values.push(desde);
+    }
+    if (hasta) {
+      conditions.push(`fecha_ingreso <= $${idx++}`);
+      values.push(hasta);
+    }
+
+    const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    console.log('HISTORIAL-OCUPACION: iniciando query', { unidad, edificio, tipo, desde, hasta });
+
+    const result = await pool.query(`
+      SELECT
+        r.id,
+        r.unidad,
+        r.edificio,
+        r.tipo,
+        r.nombre_huesped,
+        r.fecha_ingreso,
+        r.fecha_salida,
+        (r.fecha_salida - r.fecha_ingreso) AS noches,
+        r.num_personas,
+        r.property_manager_id,
+        pm.nombre AS property_manager_nombre,
+        r.registrado_por,
+        r.notas,
+        r.created_at
+      FROM inhouse_registros r
+      LEFT JOIN inhouse_property_managers pm ON r.property_manager_id = pm.id
+      ${where}
+      ORDER BY fecha_ingreso DESC
+      LIMIT 500
+    `, values);
+
+    res.json({ ok: true, registros: result.rows });
+  } catch (err) {
+    process.stdout.write('HISTORIAL-ERROR: ' + err.message + '\n');
+    res.status(500).json({ ok: false, error: err.message, detalle: err.stack });
+  }
+});
+
 // ── 6. GET /api/inhouse/:id ──────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
@@ -530,70 +594,6 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   } finally {
     client.release();
-  }
-});
-
-// Historial de ocupación con filtros
-router.get('/historial-ocupacion', async (req, res) => {
-  try {
-    const { unidad, edificio, tipo, desde, hasta } = req.query;
-
-    let conditions = [];
-    let values = [];
-    let idx = 1;
-
-    if (unidad) {
-      conditions.push(`unidad = $${idx++}`);
-      values.push(unidad);
-    }
-    if (edificio) {
-      conditions.push(`edificio = $${idx++}`);
-      values.push(edificio);
-    }
-    if (tipo) {
-      conditions.push(`tipo = $${idx++}`);
-      values.push(tipo);
-    }
-    if (desde) {
-      conditions.push(`fecha_ingreso >= $${idx++}`);
-      values.push(desde);
-    }
-    if (hasta) {
-      conditions.push(`fecha_ingreso <= $${idx++}`);
-      values.push(hasta);
-    }
-
-    const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-
-    console.log('HISTORIAL-OCUPACION: iniciando query', { unidad, edificio, tipo, desde, hasta });
-
-    const result = await pool.query(`
-      SELECT
-        r.id,
-        r.unidad,
-        r.edificio,
-        r.tipo,
-        r.nombre_huesped,
-        r.fecha_ingreso,
-        r.fecha_salida,
-        (r.fecha_salida - r.fecha_ingreso) AS noches,
-        r.num_personas,
-        r.property_manager_id,
-        pm.nombre AS property_manager_nombre,
-        r.registrado_por,
-        r.notas,
-        r.created_at
-      FROM inhouse_registros r
-      LEFT JOIN inhouse_property_managers pm ON r.property_manager_id = pm.id
-      ${where}
-      ORDER BY fecha_ingreso DESC
-      LIMIT 500
-    `, values);
-
-    res.json({ ok: true, registros: result.rows });
-  } catch (err) {
-    process.stdout.write('HISTORIAL-ERROR: ' + err.message + '\n');
-    res.status(500).json({ ok: false, error: err.message, detalle: err.stack });
   }
 });
 
