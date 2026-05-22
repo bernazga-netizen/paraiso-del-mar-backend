@@ -567,21 +567,22 @@ router.get('/historial-ocupacion', async (req, res) => {
 
     const result = await pool.query(`
       SELECT
-        id,
-        unidad,
-        edificio,
-        tipo,
-        nombre_huesped,
-        fecha_ingreso,
-        fecha_salida,
-        (fecha_salida - fecha_ingreso) AS noches,
-        num_personas,
-        property_manager_id,
-        property_manager_nombre,
-        registrado_por,
-        notas,
-        created_at
-      FROM inhouse_registros
+        r.id,
+        r.unidad,
+        r.edificio,
+        r.tipo,
+        r.nombre_huesped,
+        r.fecha_ingreso,
+        r.fecha_salida,
+        (r.fecha_salida - r.fecha_ingreso) AS noches,
+        r.num_personas,
+        r.property_manager_id,
+        pm.nombre AS property_manager_nombre,
+        r.registrado_por,
+        r.notas,
+        r.created_at
+      FROM inhouse_registros r
+      LEFT JOIN inhouse_property_managers pm ON r.property_manager_id = pm.id
       ${where}
       ORDER BY fecha_ingreso DESC
       LIMIT 500
