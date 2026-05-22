@@ -312,8 +312,6 @@ router.get('/historial-ocupacion', async (req, res) => {
 
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-    console.log('HISTORIAL-OCUPACION: iniciando query', { unidad, edificio, tipo, desde, hasta });
-
     const result = await pool.query(`
       SELECT
         r.id,
@@ -339,8 +337,8 @@ router.get('/historial-ocupacion', async (req, res) => {
 
     res.json({ ok: true, registros: result.rows });
   } catch (err) {
-    process.stdout.write('HISTORIAL-ERROR: ' + err.message + '\n');
-    res.status(500).json({ ok: false, error: err.message, detalle: err.stack });
+    console.error('Error historial-ocupacion:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
