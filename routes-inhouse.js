@@ -8,6 +8,18 @@ const { verifyToken } = require('./middlewares/auth');
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
+// ── PÚBLICO: no requiere token ───────────────────────────────
+router.get('/managers', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, nombre, activo FROM inhouse_property_managers ORDER BY nombre'
+    );
+    res.json({ ok: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 router.use(verifyToken);
 
 // ── SEGURIDAD: tipos válidos de ocupación ───────────────────
@@ -182,16 +194,6 @@ router.get('/hoy', async (req, res) => {
       pool.query(`SELECT r.*, pm.nombre AS property_manager FROM inhouse_registros r LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id WHERE r.fecha_salida = CURRENT_DATE ORDER BY r.unidad`)
     ]);
     res.json({ ok: true, check_ins: ins.rows, check_outs: outs.rows });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
-  }
-});
-
-// ── 4. GET /api/inhouse/managers ────────────────────────────
-router.get('/managers', async (req, res) => {
-  try {
-    const r = await pool.query(`SELECT * FROM inhouse_property_managers ORDER BY nombre`);
-    res.json({ ok: true, data: r.rows });
   } catch (err) {
     res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
