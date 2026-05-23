@@ -20,6 +20,105 @@ router.get('/managers', async (req, res) => {
   }
 });
 
+// ── 7. POST /api/inhouse — nuevo registro (público: formulario de huéspedes) ─
+router.post('/', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const {
+      unidad, tipo = 'R', property_manager_id,
+      nombre_huesped, email, telefono, direccion,
+      fecha_ingreso, fecha_salida, num_personas,
+      interesado_comprar = false, recibir_info = false,
+      acompanantes = [],
+      pdf_firmado_url, firma_imagen,
+      notas, registrado_por
+    } = req.body;
+
+    // ── SEGURIDAD: validaciones de entrada ──────────────────
+    if (!unidad || !nombre_huesped || !fecha_ingreso) {
+      return res.status(400).json({ ok: false, error: 'unidad, nombre_huesped y fecha_ingreso son requeridos' });
+    }
+    if (!TIPOS_VALIDOS.includes(tipo)) {
+      return res.status(400).json({ ok: false, error: 'Tipo de ocupación no válido' });
+    }
+    if (nombre_huesped.length > 300) {
+      return res.status(400).json({ ok: false, error: 'Nombre demasiado largo' });
+    }
+    if (unidad.length > 50) {
+      return res.status(400).json({ ok: false, error: 'Unidad inválida' });
+    }
+
+    const traslape = await verificarTraslape(unidad, fecha_ingreso, fecha_salida);
+    if (traslape) {
+      const fi = traslape.fecha_ingreso.toString().substring(0, 10);
+      const fs = traslape.fecha_salida ? traslape.fecha_salida.toString().substring(0, 10) : 'sin fecha de salida';
+      return res.status(409).json({
+        ok: false,
+        error: `La unidad ${unidad} ya tiene un registro en esas fechas`,
+        detalle: `Registro existente: ${traslape.nombre_huesped} · ${fi} → ${fs}`,
+        codigo: 'TRASLAPE_FECHAS'
+      });
+    }
+
+    const edificio = extraerEdificio(unidad);
+    await client.query('BEGIN');
+
+    const ins = await client.query(`
+      INSERT INTO inhouse_registros
+        (unidad, edificio, tipo, property_manager_id,
+         nombre_huesped, email, telefono, direccion,
+         fecha_ingreso, fecha_salida, num_personas,
+         interesado_comprar, recibir_info,
+         pdf_firmado_url, firma_imagen, notas, registrado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      RETURNING *
+    `, [unidad, edificio, tipo, property_manager_id || null,
+        nombre_huesped, email || null, telefono || null, direccion || null,
+        fecha_ingreso, fecha_salida || null, num_personas,
+        interesado_comprar, recibir_info,
+        pdf_firmado_url || null, firma_imagen || null,
+        notas || null, registrado_por || null]);
+
+    const registro = ins.rows[0];
+
+    // ── SEGURIDAD: acompañantes con query parametrizada ─────
+    const acompsLimpios = acompanantes
+      .filter(n => n && typeof n === 'string' && n.trim())
+      .slice(0, 8)
+      .map(n => n.trim().substring(0, 200));
+
+    for (let i = 0; i < acompsLimpios.length; i++) {
+      await client.query(
+        `INSERT INTO inhouse_acompanantes (registro_id, nombre, orden) VALUES ($1, $2, $3)`,
+        [registro.id, acompsLimpios[i], i + 1]
+      );
+    }
+
+    await guardarHistorial(client, {
+      registro_id:    registro.id,
+      usuario_nombre: registrado_por || 'Sistema',
+      accion:         'crear',
+      campo:          null,
+      valor_antes:    null,
+      valor_despues:  `${unidad} · ${nombre_huesped}`
+    });
+
+    await client.query('COMMIT');
+
+    if (req.app.get('io')) {
+      req.app.get('io').emit('inhouse:nuevo', { registro: registro.id, unidad, nombre_huesped });
+    }
+
+    res.status(201).json({ ok: true, data: registro });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('POST /inhouse:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  } finally {
+    client.release();
+  }
+});
+
 router.use(verifyToken);
 
 // ── SEGURIDAD: tipos válidos de ocupación ───────────────────
@@ -361,105 +460,6 @@ router.get('/:id', async (req, res) => {
     res.json({ ok: true, data: r.rows[0] });
   } catch (err) {
     res.status(500).json({ ok: false, error: 'Error interno del servidor' });
-  }
-});
-
-// ── 7. POST /api/inhouse — nuevo registro ───────────────────
-router.post('/', async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const {
-      unidad, tipo = 'R', property_manager_id,
-      nombre_huesped, email, telefono, direccion,
-      fecha_ingreso, fecha_salida, num_personas,
-      interesado_comprar = false, recibir_info = false,
-      acompanantes = [],
-      pdf_firmado_url, firma_imagen,
-      notas, registrado_por
-    } = req.body;
-
-    // ── SEGURIDAD: validaciones de entrada ──────────────────
-    if (!unidad || !nombre_huesped || !fecha_ingreso) {
-      return res.status(400).json({ ok: false, error: 'unidad, nombre_huesped y fecha_ingreso son requeridos' });
-    }
-    if (!TIPOS_VALIDOS.includes(tipo)) {
-      return res.status(400).json({ ok: false, error: 'Tipo de ocupación no válido' });
-    }
-    if (nombre_huesped.length > 300) {
-      return res.status(400).json({ ok: false, error: 'Nombre demasiado largo' });
-    }
-    if (unidad.length > 50) {
-      return res.status(400).json({ ok: false, error: 'Unidad inválida' });
-    }
-
-    const traslape = await verificarTraslape(unidad, fecha_ingreso, fecha_salida);
-    if (traslape) {
-      const fi = traslape.fecha_ingreso.toString().substring(0, 10);
-      const fs = traslape.fecha_salida ? traslape.fecha_salida.toString().substring(0, 10) : 'sin fecha de salida';
-      return res.status(409).json({
-        ok: false,
-        error: `La unidad ${unidad} ya tiene un registro en esas fechas`,
-        detalle: `Registro existente: ${traslape.nombre_huesped} · ${fi} → ${fs}`,
-        codigo: 'TRASLAPE_FECHAS'
-      });
-    }
-
-    const edificio = extraerEdificio(unidad);
-    await client.query('BEGIN');
-
-    const ins = await client.query(`
-      INSERT INTO inhouse_registros
-        (unidad, edificio, tipo, property_manager_id,
-         nombre_huesped, email, telefono, direccion,
-         fecha_ingreso, fecha_salida, num_personas,
-         interesado_comprar, recibir_info,
-         pdf_firmado_url, firma_imagen, notas, registrado_por)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-      RETURNING *
-    `, [unidad, edificio, tipo, property_manager_id || null,
-        nombre_huesped, email || null, telefono || null, direccion || null,
-        fecha_ingreso, fecha_salida || null, num_personas,
-        interesado_comprar, recibir_info,
-        pdf_firmado_url || null, firma_imagen || null,
-        notas || null, registrado_por || null]);
-
-    const registro = ins.rows[0];
-
-    // ── SEGURIDAD: acompañantes con query parametrizada ─────
-    const acompsLimpios = acompanantes
-      .filter(n => n && typeof n === 'string' && n.trim())
-      .slice(0, 8)
-      .map(n => n.trim().substring(0, 200));
-
-    for (let i = 0; i < acompsLimpios.length; i++) {
-      await client.query(
-        `INSERT INTO inhouse_acompanantes (registro_id, nombre, orden) VALUES ($1, $2, $3)`,
-        [registro.id, acompsLimpios[i], i + 1]
-      );
-    }
-
-    await guardarHistorial(client, {
-      registro_id:    registro.id,
-      usuario_nombre: registrado_por || 'Sistema',
-      accion:         'crear',
-      campo:          null,
-      valor_antes:    null,
-      valor_despues:  `${unidad} · ${nombre_huesped}`
-    });
-
-    await client.query('COMMIT');
-
-    if (req.app.get('io')) {
-      req.app.get('io').emit('inhouse:nuevo', { registro: registro.id, unidad, nombre_huesped });
-    }
-
-    res.status(201).json({ ok: true, data: registro });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('POST /inhouse:', err);
-    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
-  } finally {
-    client.release();
   }
 });
 
