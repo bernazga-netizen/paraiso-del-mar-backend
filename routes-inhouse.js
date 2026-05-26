@@ -595,6 +595,8 @@ router.delete('/:id', async (req, res) => {
   try {
     const { usuario_id, usuario_nombre } = req.query;
 
+    console.log('[DELETE] Iniciando eliminación id:', req.params.id, '| usuario:', usuario_nombre);
+
     const ant = await client.query(
       `SELECT unidad, nombre_huesped FROM inhouse_registros WHERE id = $1`,
       [req.params.id]
@@ -604,17 +606,21 @@ router.delete('/:id', async (req, res) => {
     const { unidad, nombre_huesped } = ant.rows[0];
     const valorAntes = `${unidad} · ${nombre_huesped}`;
 
+    console.log('[DELETE] Registro encontrado:', valorAntes);
+
     await client.query('BEGIN');
 
     await client.query(
       `DELETE FROM inhouse_acompanantes WHERE registro_id = $1`,
       [req.params.id]
     );
+    console.log('[DELETE] Acompañantes eliminados');
 
     await client.query(
       `DELETE FROM inhouse_registros WHERE id = $1`,
       [req.params.id]
     );
+    console.log('[DELETE] Registro eliminado');
 
     await client.query(`
       INSERT INTO inhouse_historial
@@ -625,14 +631,18 @@ router.delete('/:id', async (req, res) => {
       usuario_nombre || 'Administración',
       valorAntes
     ]);
+    console.log('[DELETE] Historial insertado');
 
     await client.query('COMMIT');
+    console.log('[DELETE] COMMIT exitoso');
+
     res.json({ ok: true, deleted: req.params.id });
 
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('DELETE /inhouse/:id:', err);
-    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+    console.error('[DELETE] ERROR:', err.message);
+    console.error('[DELETE] STACK:', err.stack);
+    res.status(500).json({ ok: false, error: err.message });
   } finally {
     client.release();
   }
