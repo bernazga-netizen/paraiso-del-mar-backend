@@ -5,6 +5,8 @@ const express  = require('express');
 const router   = express.Router();
 const { Pool } = require('pg');
 const { verifyToken } = require('./middlewares/auth');
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
@@ -104,6 +106,28 @@ router.post('/', async (req, res) => {
     });
 
     await client.query('COMMIT');
+
+    try {
+      const unidadLabel = registro.edificio && registro.edificio !== 'Casa'
+        ? 'Edificio ' + registro.edificio + ' · Unidad ' + registro.unidad
+        : 'Casa ' + registro.unidad;
+      const tipoMap = { H: 'Propietario', R: 'Renta', G: 'Invitado', P: 'Personal' };
+      const tipoTexto = tipoMap[registro.tipo] || registro.tipo;
+      const fechaIn = registro.fecha_ingreso
+        ? new Date(registro.fecha_ingreso).toLocaleDateString('es-MX', { timeZone: 'America/Mazatlan', day: '2-digit', month: 'long', year: 'numeric' })
+        : '—';
+      const fechaOut = registro.fecha_salida
+        ? new Date(registro.fecha_salida).toLocaleDateString('es-MX', { timeZone: 'America/Mazatlan', day: '2-digit', month: 'long', year: 'numeric' })
+        : 'Por definir';
+      await resend.emails.send({
+        from: 'onboarding@resend.dev',
+        to: 'hoapdm@gmail.com',
+        subject: 'Inhouse: ' + unidadLabel,
+        html: '<div style="font-family:Verdana,Geneva,sans-serif;background:#f2efec;padding:32px;"><div style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #c2d8dd;border-radius:4px;overflow:hidden;"><div style="background:#003660;padding:20px 28px;"><p style="margin:0;font-size:15px;font-weight:bold;color:#ffffff;letter-spacing:2px;">Paraíso del Mar</p><p style="margin:4px 0 0;font-size:10px;color:#71aeb7;">Nuevo registro Inhouse</p></div><div style="height:3px;background:linear-gradient(90deg,#007c89,#71aeb7);"></div><div style="padding:28px;"><table style="width:100%;border-collapse:collapse;font-size:13px;"><tr><td style="padding:8px 0;color:#3d5a66;width:38%;border-bottom:1px solid #e8f4f6;">Unidad</td><td style="padding:8px 0;color:#1a2e3a;font-weight:bold;border-bottom:1px solid #e8f4f6;">' + unidadLabel + '</td></tr><tr><td style="padding:8px 0;color:#3d5a66;border-bottom:1px solid #e8f4f6;">Huésped</td><td style="padding:8px 0;color:#1a2e3a;font-weight:bold;border-bottom:1px solid #e8f4f6;">' + registro.nombre_huesped + '</td></tr><tr><td style="padding:8px 0;color:#3d5a66;border-bottom:1px solid #e8f4f6;">Tipo</td><td style="padding:8px 0;color:#1a2e3a;border-bottom:1px solid #e8f4f6;">' + tipoTexto + '</td></tr><tr><td style="padding:8px 0;color:#3d5a66;border-bottom:1px solid #e8f4f6;">Check-in</td><td style="padding:8px 0;color:#1a2e3a;border-bottom:1px solid #e8f4f6;">' + fechaIn + '</td></tr><tr><td style="padding:8px 0;color:#3d5a66;border-bottom:1px solid #e8f4f6;">Check-out</td><td style="padding:8px 0;color:#1a2e3a;border-bottom:1px solid #e8f4f6;">' + fechaOut + '</td></tr><tr><td style="padding:8px 0;color:#3d5a66;border-bottom:1px solid #e8f4f6;">Correo</td><td style="padding:8px 0;color:#1a2e3a;border-bottom:1px solid #e8f4f6;">' + (registro.email || '—') + '</td></tr><tr><td style="padding:8px 0;color:#3d5a66;">Teléfono</td><td style="padding:8px 0;color:#1a2e3a;">' + (registro.telefono || '—') + '</td></tr></table></div><div style="background:#003660;padding:12px 28px;text-align:center;"><p style="margin:0;font-size:10px;color:#71aeb7;">Paraíso del Mar · La Paz, BCS · Sistema de Gestión</p></div></div></div>'
+      });
+    } catch (emailErr) {
+      console.error('Error al enviar notificacion por correo:', emailErr.message);
+    }
 
     if (req.app.get('io')) {
       req.app.get('io').emit('inhouse:nuevo', { registro: registro.id, unidad, nombre_huesped });
@@ -572,25 +596,42 @@ router.delete('/:id', async (req, res) => {
     const { usuario_id, usuario_nombre } = req.query;
 
     const ant = await client.query(
-      `SELECT unidad, nombre_huesped FROM inhouse_registros WHERE id = $1`, [req.params.id]
+      `SELECT unidad, nombre_huesped FROM inhouse_registros WHERE id = $1`,
+      [req.params.id]
     );
     if (!ant.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
 
+    const { unidad, nombre_huesped } = ant.rows[0];
+    const valorAntes = `${unidad} · ${nombre_huesped}`;
+
     await client.query('BEGIN');
+
+    await client.query(
+      `DELETE FROM inhouse_acompanantes WHERE registro_id = $1`,
+      [req.params.id]
+    );
+
+    await client.query(
+      `DELETE FROM inhouse_registros WHERE id = $1`,
+      [req.params.id]
+    );
 
     await client.query(`
       INSERT INTO inhouse_historial
         (registro_id, usuario_id, usuario_nombre, accion, campo, valor_antes, valor_despues)
-      VALUES ($1, $2, $3, 'eliminar', NULL, $4, NULL)
-    `, [req.params.id, usuario_id || null, usuario_nombre || 'Administración',
-        `${ant.rows[0].unidad} · ${ant.rows[0].nombre_huesped}`]);
+      VALUES (NULL, $1, $2, 'eliminar', NULL, $3, NULL)
+    `, [
+      usuario_id || null,
+      usuario_nombre || 'Administración',
+      valorAntes
+    ]);
 
-    await client.query(`DELETE FROM inhouse_registros WHERE id = $1`, [req.params.id]);
     await client.query('COMMIT');
-
     res.json({ ok: true, deleted: req.params.id });
+
   } catch (err) {
     await client.query('ROLLBACK');
+    console.error('DELETE /inhouse/:id:', err);
     res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   } finally {
     client.release();
