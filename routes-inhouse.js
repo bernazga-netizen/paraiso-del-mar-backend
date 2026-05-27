@@ -495,9 +495,10 @@ router.put('/:id', async (req, res) => {
       unidad, tipo, property_manager_id,
       nombre_huesped, email, telefono, direccion,
       fecha_ingreso, fecha_salida, num_personas,
-      interesado_comprar, recibir_info, notas,
-      usuario_id, usuario_nombre
+      interesado_comprar, recibir_info, notas
     } = req.body;
+    const usuario_id = req.user.id;
+    const usuario_nombre = req.user.nombre;
 
     // ── SEGURIDAD: validar tipo si viene en el body ─────────
     if (tipo && !TIPOS_VALIDOS.includes(tipo)) {
@@ -593,7 +594,8 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { usuario_id, usuario_nombre } = req.query;
+    const usuario_id = req.user.id;
+    const usuario_nombre = req.user.nombre;
 
     console.log('[DELETE] Iniciando eliminación id:', req.params.id, '| usuario:', usuario_nombre);
 

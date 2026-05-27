@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'pdm_jwt_secret_dev_only';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET no está configurado en las variables de entorno');
 const JWT_EXPIRES_IN = '8h';
 
 function verifyToken(req, res, next) {

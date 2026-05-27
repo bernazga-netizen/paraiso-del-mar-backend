@@ -11,6 +11,13 @@ const { verifyToken, JWT_SECRET, JWT_EXPIRES_IN } = require('./middlewares/auth'
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
+function requireAdmin(req, res, next) {
+  if (req.user.rol !== 'admin') {
+    return res.status(403).json({ error: 'Acceso denegado. Se requiere rol admin.' });
+  }
+  next();
+}
+
 // ── Helpers de validación ────────────────────────────────────
 function validarPassword(password) {
   if (!password || typeof password !== 'string') return 'La contraseña es requerida';
@@ -25,7 +32,7 @@ function sanitizarNombre(nombre) {
 }
 
 // ── POST /api/auth/setup-password ───────────────────────────
-router.post('/setup-password', async (req, res) => {
+router.post('/setup-password', verifyToken, requireAdmin, async (req, res) => {
   try {
     const nombre   = sanitizarNombre(req.body.nombre);
     const password = req.body.password;
@@ -133,7 +140,7 @@ router.get('/usuarios', verifyToken, async (req, res) => {
 });
 
 // ── PUT /api/auth/usuarios/:id/password ─────────────────────
-router.put('/usuarios/:id/password', verifyToken, async (req, res) => {
+router.put('/usuarios/:id/password', verifyToken, requireAdmin, async (req, res) => {
   try {
     const errPass = validarPassword(req.body.password);
     if (errPass) return res.status(400).json({ ok: false, error: errPass });
@@ -151,7 +158,7 @@ router.put('/usuarios/:id/password', verifyToken, async (req, res) => {
 });
 
 // ── PUT /api/auth/usuarios/:id ───────────────────────────────
-router.put('/usuarios/:id', verifyToken, async (req, res) => {
+router.put('/usuarios/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { activo } = req.body;
     const r = await pool.query(
