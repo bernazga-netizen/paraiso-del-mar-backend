@@ -65,7 +65,6 @@ router.post('/setup-password', verifyToken, requireAdmin, async (req, res) => {
 });
 
 // ── POST /api/auth/login ─────────────────────────────────────
-// Nota: el rate limiting (20 intentos / 15 min) se aplica en server.js
 router.post('/login', async (req, res) => {
   try {
     const nombre   = sanitizarNombre(req.body.nombre);
@@ -82,7 +81,6 @@ router.post('/login', async (req, res) => {
       `SELECT * FROM inhouse_usuarios WHERE nombre ILIKE $1 AND activo = TRUE`, [nombre]
     );
 
-    // Respuesta genérica para no revelar si el usuario existe
     if (!user.rows.length) {
       return res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos' });
     }
@@ -103,7 +101,7 @@ router.post('/login', async (req, res) => {
     );
 
     const token = jwt.sign(
-      { id: u.id, nombre: u.nombre, rol: u.rol },
+      { id: u.id, nombre: u.nombre, rol: u.rol, es_guardia: u.es_guardia }, // ← ACTUALIZADO
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
@@ -112,10 +110,11 @@ router.post('/login', async (req, res) => {
       ok: true,
       token,
       usuario: {
-        id:     u.id,
-        nombre: u.nombre,
-        email:  u.email,
-        rol:    u.rol
+        id:         u.id,
+        nombre:     u.nombre,
+        email:      u.email,
+        rol:        u.rol,
+        es_guardia: u.es_guardia // ← ACTUALIZADO
       }
     });
   } catch (err) {
@@ -128,9 +127,9 @@ router.post('/login', async (req, res) => {
 router.get('/usuarios', verifyToken, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, nombre, email, rol, activo, created_at, last_login,
+      `SELECT id, nombre, email, rol, activo, es_guardia, created_at, last_login,
               (password_hash IS NOT NULL) AS tiene_password
-       FROM inhouse_usuarios ORDER BY nombre`
+       FROM inhouse_usuarios ORDER BY nombre` // ← ACTUALIZADO
     );
     res.json({ ok: true, data: r.rows });
   } catch (err) {
@@ -160,10 +159,11 @@ router.put('/usuarios/:id/password', verifyToken, requireAdmin, async (req, res)
 // ── PUT /api/auth/usuarios/:id ───────────────────────────────
 router.put('/usuarios/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
-    const { activo } = req.body;
+    const { activo, es_guardia } = req.body; // ← ACTUALIZADO
     const r = await pool.query(
-      `UPDATE inhouse_usuarios SET activo = $1 WHERE id = $2 RETURNING id, nombre, activo`,
-      [activo, req.params.id]
+      `UPDATE inhouse_usuarios SET activo = $1, es_guardia = $2 WHERE id = $3
+       RETURNING id, nombre, activo, es_guardia`, // ← ACTUALIZADO
+      [activo, es_guardia ?? false, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
     res.json({ ok: true, data: r.rows[0] });
