@@ -19,6 +19,7 @@ const io = socketIo(server, {
     origin: [
       'https://paraiso-del-mar-app-web.vercel.app',
       'https://paraiso-del-mar-dashboard.vercel.app',
+      'https://paraiso-del-mar-seguridad.vercel.app',
       'http://localhost:3000',
       'http://localhost:5500'
     ],
@@ -34,6 +35,7 @@ const pool = new Pool({
 const allowedOrigins = [
   'https://paraiso-del-mar-app-web.vercel.app',
   'https://paraiso-del-mar-dashboard.vercel.app',
+  'https://paraiso-del-mar-seguridad.vercel.app',
   'http://localhost:3000',
   'http://localhost:5500'
 ];
@@ -55,7 +57,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api/auth',      authRouter);
 app.use('/api/historial', historialRouter);
 app.use('/api/inhouse',   inhouseRouter);
-app.use('/api/bitacoras', bitacorasRouter); // ← NUEVO
+app.use('/api/bitacoras', verifyToken, bitacorasRouter);
 
 // Crear tabla de auditoría si no existe
 pool.query(`
