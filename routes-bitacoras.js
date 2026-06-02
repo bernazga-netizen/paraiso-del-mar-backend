@@ -5,7 +5,7 @@ const { Pool } = require('pg');
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
 const ExcelJS = require('exceljs');
-const { verificarToken } = require('./middlewares/auth');
+const { verifyToken } = require('./middlewares/auth');
 
 // ─── Conexión a BD ────────────────────────────────────────────────────────────
 const pool = new Pool({
@@ -133,7 +133,7 @@ function buildFiltros(query, params, baseWhere) {
 // ─── RUTAS ESTÁTICAS (deben ir ANTES de /:id) ────────────────────────────────
 
 // POST /api/bitacoras/upload-foto
-router.post('/upload-foto', verificarToken, esAdminOGuardia, upload.single('foto'), async (req, res) => {
+router.post('/upload-foto', verifyToken, esAdminOGuardia, upload.single('foto'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No se recibió ninguna imagen' });
@@ -159,7 +159,7 @@ router.post('/upload-foto', verificarToken, esAdminOGuardia, upload.single('foto
 });
 
 // GET /api/bitacoras/export
-router.get('/export', verificarToken, esAdmin, async (req, res) => {
+router.get('/export', verifyToken, esAdmin, async (req, res) => {
   try {
     const base = ['b.deleted_at IS NULL'];
     const { conds, vals } = buildFiltros(req.query, [], base);
@@ -233,7 +233,7 @@ router.get('/export', verificarToken, esAdmin, async (req, res) => {
 });
 
 // GET /api/bitacoras/auditoria  (global)
-router.get('/auditoria', verificarToken, esAdmin, async (req, res) => {
+router.get('/auditoria', verifyToken, esAdmin, async (req, res) => {
   try {
     const page  = Math.max(1, parseInt(req.query.page)  || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
@@ -298,7 +298,7 @@ router.get('/auditoria', verificarToken, esAdmin, async (req, res) => {
 });
 
 // ─── POST /api/bitacoras ─────────────────────────────────────────────────────
-router.post('/', verificarToken, esAdminOGuardia, async (req, res) => {
+router.post('/', verifyToken, esAdminOGuardia, async (req, res) => {
   const {
     tipo, punto_acceso, descripcion, observaciones,
     foto_url, firma_saliente, firma_entrante, guardia_entrante_id
@@ -381,7 +381,7 @@ router.post('/', verificarToken, esAdminOGuardia, async (req, res) => {
 });
 
 // ─── GET /api/bitacoras ───────────────────────────────────────────────────────
-router.get('/', verificarToken, esAdmin, async (req, res) => {
+router.get('/', verifyToken, esAdmin, async (req, res) => {
   try {
     const page  = Math.max(1, parseInt(req.query.page)  || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
@@ -428,7 +428,7 @@ router.get('/', verificarToken, esAdmin, async (req, res) => {
 });
 
 // ─── GET /api/bitacoras/:id ───────────────────────────────────────────────────
-router.get('/:id', verificarToken, esAdmin, async (req, res) => {
+router.get('/:id', verifyToken, esAdmin, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id || isNaN(id)) {
     return res.status(400).json({ success: false, error: 'ID inválido' });
@@ -459,7 +459,7 @@ router.get('/:id', verificarToken, esAdmin, async (req, res) => {
 });
 
 // ─── GET /api/bitacoras/:id/auditoria ────────────────────────────────────────
-router.get('/:id/auditoria', verificarToken, esAdmin, async (req, res) => {
+router.get('/:id/auditoria', verifyToken, esAdmin, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id || isNaN(id)) {
     return res.status(400).json({ success: false, error: 'ID inválido' });
@@ -485,7 +485,7 @@ router.get('/:id/auditoria', verificarToken, esAdmin, async (req, res) => {
 });
 
 // ─── PUT /api/bitacoras/:id ───────────────────────────────────────────────────
-router.put('/:id', verificarToken, esAdminOGuardia, puedeEditar, async (req, res) => {
+router.put('/:id', verifyToken, esAdminOGuardia, puedeEditar, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id || isNaN(id)) {
     return res.status(400).json({ success: false, error: 'ID inválido' });
@@ -567,7 +567,7 @@ router.put('/:id', verificarToken, esAdminOGuardia, puedeEditar, async (req, res
 });
 
 // ─── DELETE /api/bitacoras/:id ────────────────────────────────────────────────
-router.delete('/:id', verificarToken, esAdminOGuardia, puedeEditar, async (req, res) => {
+router.delete('/:id', verifyToken, esAdminOGuardia, puedeEditar, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id || isNaN(id)) {
     return res.status(400).json({ success: false, error: 'ID inválido' });
