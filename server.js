@@ -1,3 +1,4 @@
+// server.js
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -9,6 +10,7 @@ const { verifyToken } = require('./middlewares/auth');
 const authRouter     = require('./routes-auth');
 const historialRouter = require('./routes-historial');
 const inhouseRouter  = require('./routes-inhouse');
+const bitacorasRouter = require('./routes-bitacoras'); // ← NUEVO
 
 const app = express();
 const server = http.createServer(app);
@@ -53,6 +55,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api/auth',      authRouter);
 app.use('/api/historial', historialRouter);
 app.use('/api/inhouse',   inhouseRouter);
+app.use('/api/bitacoras', bitacorasRouter); // ← NUEVO
 
 // Crear tabla de auditoría si no existe
 pool.query(`
