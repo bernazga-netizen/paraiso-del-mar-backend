@@ -38,13 +38,13 @@ const upload = multer({
 
 // Solo admin
 function esAdmin(req, res, next) {
-  if (req.usuario && req.usuario.rol === 'admin') return next();
+  if (req.user && req.user.rol === 'admin') return next();
   return res.status(403).json({ success: false, error: 'Acceso restringido a administradores' });
 }
 
 // Admin o guardia
 function esAdminOGuardia(req, res, next) {
-  const u = req.usuario;
+  const u = req.user;
   if (!u) return res.status(401).json({ success: false, error: 'No autenticado' });
   if (u.rol === 'admin' || u.es_guardia === true) return next();
   return res.status(403).json({ success: false, error: 'Acceso restringido a guardias y administradores' });
@@ -52,7 +52,7 @@ function esAdminOGuardia(req, res, next) {
 
 // Verifica ventana de 5 minutos para guardias (admin siempre puede)
 async function puedeEditar(req, res, next) {
-  const u = req.usuario;
+  const u = req.user;
   if (u.rol === 'admin') return next();
 
   try {
@@ -350,7 +350,7 @@ router.post('/', verifyToken, esAdminOGuardia, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        RETURNING id, tipo, punto_acceso, descripcion, guardia_id, created_at`,
       [
-        req.usuario.id, tipo, punto_acceso, descripcion.trim(),
+        req.user.id, tipo, punto_acceso, descripcion.trim(),
         observaciones ? observaciones.trim() : null,
         foto_url || null,
         firma_saliente || null,
@@ -363,8 +363,8 @@ router.post('/', verifyToken, esAdminOGuardia, async (req, res) => {
 
     await registrarAuditoria(client, {
       bitacora_id:   nuevo.id,
-      usuario_id:    req.usuario.id,
-      usuario_nombre: req.usuario.nombre,
+      usuario_id:    req.user.id,
+      usuario_nombre: req.user.nombre,
       accion:        'crear',
       motivo:        null
     });
@@ -545,8 +545,8 @@ router.put('/:id', verifyToken, esAdminOGuardia, puedeEditar, async (req, res) =
     for (const campo of Object.keys(cambios)) {
       await registrarAuditoria(client, {
         bitacora_id:    id,
-        usuario_id:     req.usuario.id,
-        usuario_nombre: req.usuario.nombre,
+        usuario_id:     req.user.id,
+        usuario_nombre: req.user.nombre,
         accion:         'editar',
         campo_modificado: campo,
         valor_anterior: String(anterior[campo] ?? ''),
@@ -594,13 +594,13 @@ router.delete('/:id', verifyToken, esAdminOGuardia, puedeEditar, async (req, res
     // Soft delete
     await client.query(
       'UPDATE bitacoras_registros SET deleted_at = NOW(), deleted_by = $1, updated_at = NOW() WHERE id = $2',
-      [req.usuario.id, id]
+      [req.user.id, id]
     );
 
     await registrarAuditoria(client, {
       bitacora_id:    id,
-      usuario_id:     req.usuario.id,
-      usuario_nombre: req.usuario.nombre,
+      usuario_id:     req.user.id,
+      usuario_nombre: req.user.nombre,
       accion:         'eliminar',
       motivo:         motivo.trim()
     });
