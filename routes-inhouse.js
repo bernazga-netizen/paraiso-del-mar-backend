@@ -143,6 +143,31 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ── PÚBLICO: GET /api/inhouse/disponibilidad ────────────────
+// Verifica si una unidad está disponible en un rango de fechas
+router.get('/disponibilidad', async (req, res) => {
+  try {
+    const { unidad, fecha_entrada, fecha_salida } = req.query;
+    if (!unidad || !fecha_entrada || !fecha_salida) {
+      return res.status(400).json({ ok: false, error: 'unidad, fecha_entrada y fecha_salida son requeridos' });
+    }
+    const traslape = await verificarTraslape(unidad.trim(), fecha_entrada, fecha_salida);
+    if (traslape) {
+      const fi = traslape.fecha_ingreso.toString().substring(0, 10);
+      const fs = traslape.fecha_salida ? traslape.fecha_salida.toString().substring(0, 10) : 'indefinido';
+      return res.json({
+        ok: true,
+        disponible: false,
+        detalle: `${traslape.nombre_huesped} · ${fi} → ${fs}`
+      });
+    }
+    res.json({ ok: true, disponible: true });
+  } catch (err) {
+    console.error('GET /inhouse/disponibilidad:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
 // ── PÚBLICO: GET /api/inhouse/unidades-por-pm ───────────────
 // Retorna las unidades activas asignadas a un PM
 // Usado por generador-link.html (sin login)
