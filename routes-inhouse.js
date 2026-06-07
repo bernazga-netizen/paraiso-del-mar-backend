@@ -151,8 +151,17 @@ router.get('/disponibilidad', async (req, res) => {
     if (!unidad || !fecha_entrada || !fecha_salida) {
       return res.status(400).json({ ok: false, error: 'unidad, fecha_entrada y fecha_salida son requeridos' });
     }
-    const traslape = await verificarTraslape(unidad.trim(), fecha_entrada, fecha_salida);
-    if (traslape) {
+    const fechaSalidaEfectiva = fecha_salida || '2099-12-31';
+    const result = await pool.query(`
+      SELECT nombre_huesped, fecha_ingreso, fecha_salida
+      FROM inhouse_registros
+      WHERE UPPER(unidad) = UPPER($1)
+        AND fecha_ingreso < $3
+        AND (fecha_salida IS NULL OR fecha_salida > $2)
+      LIMIT 1
+    `, [unidad.trim(), fecha_entrada, fechaSalidaEfectiva]);
+    if (result.rows.length) {
+      const traslape = result.rows[0];
       const fi = traslape.fecha_ingreso.toString().substring(0, 10);
       const fs = traslape.fecha_salida ? traslape.fecha_salida.toString().substring(0, 10) : 'indefinido';
       return res.json({
