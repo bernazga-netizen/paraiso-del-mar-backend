@@ -23,7 +23,7 @@ const io = socketIo(server, {
       'http://localhost:3000',
       'http://localhost:5500'
     ],
-    methods: ['GET', 'POST']
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
   }
 });
 
@@ -48,7 +48,7 @@ app.use(cors({
       callback(new Error('CORS bloqueado: origen no permitido'));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json({ limit: '10mb' }));
