@@ -18,6 +18,13 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function requireGerente(req, res, next) {
+  if (!['admin', 'gerente'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Acceso denegado. Se requiere rol admin o gerente.' });
+  }
+  next();
+}
+
 // ── Helpers de validación ────────────────────────────────────
 function validarPassword(password) {
   if (!password || typeof password !== 'string') return 'La contraseña es requerida';
@@ -185,4 +192,4 @@ router.get('/usuarios-publico', async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = { router, requireGerente };

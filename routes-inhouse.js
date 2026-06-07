@@ -5,6 +5,7 @@ const express  = require('express');
 const router   = express.Router();
 const { Pool } = require('pg');
 const { verifyToken } = require('./middlewares/auth');
+const { requireGerente } = require('./routes-auth');
 const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -230,6 +231,84 @@ router.get('/unidades-por-pm', async (req, res) => {
   }
 });
 
+// ── GERENTE: GET /api/inhouse/pm-unidades ───────────────────
+// Lista todas las unidades con su PM asignado actual
+router.get('/pm-unidades', verifyToken, requireGerente, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        u.unidad,
+        u.tipo,
+        u.edificio,
+        u.recamaras,
+        u.en_renta,
+        u.activo,
+        pm.id        AS pm_id,
+        pm.nombre    AS pm_nombre
+      FROM inhouse_unidades u
+      LEFT JOIN inhouse_pm_unidades pu ON pu.unidad = u.unidad AND pu.fecha_fin IS NULL
+      LEFT JOIN inhouse_property_managers pm ON pm.id = pu.pm_id
+      ORDER BY u.tipo, u.edificio NULLS LAST, u.unidad
+    `);
+    res.json({ ok: true, data: result.rows });
+  } catch (err) {
+    console.error('GET /inhouse/pm-unidades:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
+// ── GERENTE: PUT /api/inhouse/pm-unidades/:unidad ────────────
+// Reasigna una unidad a un PM diferente (cierra la asignación actual y abre una nueva)
+router.put('/pm-unidades/:unidad', verifyToken, requireGerente, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { unidad } = req.params;
+    const { pm_id } = req.body;
+
+    await client.query('BEGIN');
+
+    // Cerrar asignación actual si existe
+    await client.query(`
+      UPDATE inhouse_pm_unidades
+      SET fecha_fin = CURRENT_DATE
+      WHERE unidad = $1 AND fecha_fin IS NULL
+    `, [unidad]);
+
+    // Crear nueva asignación si pm_id no es null
+    if (pm_id) {
+      await client.query(`
+        INSERT INTO inhouse_pm_unidades (pm_id, unidad, creado_por)
+        VALUES ($1, $2, $3)
+      `, [pm_id, unidad, req.user.id]);
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, mensaje: 'Asignación actualizada correctamente' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('PUT /inhouse/pm-unidades:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  } finally {
+    client.release();
+  }
+});
+
+// ── GERENTE: PATCH /api/inhouse/unidades/:unidad/en-renta ────
+// Actualiza el flag en_renta de una unidad
+router.patch('/unidades/:unidad/en-renta', verifyToken, requireGerente, async (req, res) => {
+  try {
+    const { en_renta } = req.body;
+    await pool.query(
+      `UPDATE inhouse_unidades SET en_renta = $1 WHERE unidad = $2`,
+      [en_renta, req.params.unidad]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('PATCH /inhouse/unidades/en-renta:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
 router.use(verifyToken);
 
 // ── SEGURIDAD: tipos válidos de ocupación ───────────────────
@@ -410,7 +489,7 @@ router.get('/hoy', async (req, res) => {
 });
 
 // ── 4b. POST /api/inhouse/managers ──────────────────────────
-router.post('/managers', async (req, res) => {
+router.post('/managers', verifyToken, requireGerente, async (req, res) => {
   try {
     const { nombre, email, telefono } = req.body;
     if (!nombre || !nombre.trim()) {
@@ -427,7 +506,7 @@ router.post('/managers', async (req, res) => {
 });
 
 // ── 4c. PUT /api/inhouse/managers/:id ───────────────────────
-router.put('/managers/:id', async (req, res) => {
+router.put('/managers/:id', requireGerente, async (req, res) => {
   try {
     const { nombre, email, telefono, activo } = req.body;
     const r = await pool.query(
