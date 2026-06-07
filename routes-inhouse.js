@@ -5,7 +5,8 @@ const express  = require('express');
 const router   = express.Router();
 const { Pool } = require('pg');
 const { verifyToken } = require('./middlewares/auth');
-const { requireGerente } = require('./routes-auth');
+const authRouter = require('./routes-auth');
+const requireGerente = authRouter.requireGerente;
 const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 

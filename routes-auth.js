@@ -192,4 +192,5 @@ router.get('/usuarios-publico', async (req, res) => {
   }
 });
 
-module.exports = { router, requireGerente };
+router.requireGerente = requireGerente;
+module.exports = router;
