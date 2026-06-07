@@ -144,22 +144,43 @@ router.post('/', async (req, res) => {
 });
 
 // ── PÚBLICO: GET /api/inhouse/disponibilidad ────────────────
-// Verifica si una unidad está disponible en un rango de fechas
+// Verifica si una unidad está disponible en un rango de fechas.
+// Maneja conflictos entre unidad completa y habitaciones individuales:
+// - Si pides F-403 completa → revisa F-403, F-403-a, F-403-b, F-403-c
+// - Si pides F-403-b → revisa F-403-b y F-403 completa
 router.get('/disponibilidad', async (req, res) => {
   try {
     const { unidad, fecha_entrada, fecha_salida } = req.query;
     if (!unidad || !fecha_entrada || !fecha_salida) {
       return res.status(400).json({ ok: false, error: 'unidad, fecha_entrada y fecha_salida son requeridos' });
     }
+    const u = unidad.trim().toUpperCase();
     const fechaSalidaEfectiva = fecha_salida || '2099-12-31';
+
+    // Determinar si es habitación individual (termina en -a, -b, -c)
+    const esHabitacion = /-(A|B|C)$/i.test(u);
+    // Unidad base (sin sufijo de habitación)
+    const unidadBase = esHabitacion ? u.replace(/-(A|B|C)$/i, '') : u;
+
+    // Construir lista de unidades a verificar:
+    // Si es completa → la unidad + todas sus habitaciones posibles
+    // Si es habitación → la habitación + la unidad completa (sin sufijo)
+    let unidadesAVerificar;
+    if (esHabitacion) {
+      unidadesAVerificar = [u, unidadBase];
+    } else {
+      unidadesAVerificar = [u, `${u}-A`, `${u}-B`, `${u}-C`];
+    }
+
     const result = await pool.query(`
-      SELECT nombre_huesped, fecha_ingreso, fecha_salida
+      SELECT unidad, nombre_huesped, fecha_ingreso, fecha_salida
       FROM inhouse_registros
-      WHERE UPPER(unidad) = UPPER($1)
+      WHERE UPPER(unidad) = ANY($1)
         AND fecha_ingreso < $3
         AND (fecha_salida IS NULL OR fecha_salida > $2)
       LIMIT 1
-    `, [unidad.trim(), fecha_entrada, fechaSalidaEfectiva]);
+    `, [unidadesAVerificar, fecha_entrada, fechaSalidaEfectiva]);
+
     if (result.rows.length) {
       const traslape = result.rows[0];
       const fi = traslape.fecha_ingreso.toString().substring(0, 10);
@@ -167,7 +188,7 @@ router.get('/disponibilidad', async (req, res) => {
       return res.json({
         ok: true,
         disponible: false,
-        detalle: `${traslape.nombre_huesped} · ${fi} → ${fs}`
+        detalle: `${traslape.nombre_huesped} (${traslape.unidad}) · ${fi} → ${fs}`
       });
     }
     res.json({ ok: true, disponible: true });
