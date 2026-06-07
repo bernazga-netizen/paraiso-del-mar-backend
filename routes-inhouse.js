@@ -143,6 +143,38 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ── PÚBLICO: GET /api/inhouse/unidades-por-pm ───────────────
+// Retorna las unidades activas asignadas a un PM
+// Usado por generador-link.html (sin login)
+router.get('/unidades-por-pm', async (req, res) => {
+  try {
+    const pm_id = parseInt(req.query.pm_id);
+    if (!pm_id || isNaN(pm_id)) {
+      return res.status(400).json({ ok: false, error: 'pm_id es requerido' });
+    }
+    const result = await pool.query(`
+      SELECT
+        u.unidad,
+        u.tipo,
+        u.edificio,
+        u.recamaras,
+        u.en_renta,
+        pm.nombre AS property_manager
+      FROM inhouse_pm_unidades pu
+      JOIN inhouse_unidades u ON u.unidad = pu.unidad
+      JOIN inhouse_property_managers pm ON pm.id = pu.pm_id
+      WHERE pu.pm_id = $1
+        AND pu.fecha_fin IS NULL
+        AND u.activo = true
+      ORDER BY u.tipo, u.edificio NULLS LAST, u.unidad
+    `, [pm_id]);
+    res.json({ ok: true, data: result.rows });
+  } catch (err) {
+    console.error('GET /inhouse/unidades-por-pm:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
 router.use(verifyToken);
 
 // ── SEGURIDAD: tipos válidos de ocupación ───────────────────
