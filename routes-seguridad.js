@@ -165,18 +165,97 @@ router.get('/calendario', verifyToken, esAdminOSupervisor, async (req, res) => {
 // POST /api/seguridad/calendario
 router.post('/calendario', verifyToken, esAdminOSupervisor, async (req, res) => {
   try {
-    const { guardia_id, turno_id, punto_id, fecha } = req.body;
+    const { guardia_id, turno_id, punto_id, fecha, nota_excepcion, es_cobertura } = req.body;
     if (!guardia_id || !turno_id || !punto_id || !fecha) {
       return res.status(400).json({ success: false, error: 'guardia_id, turno_id, punto_id y fecha son requeridos' });
     }
 
+    // ── Cargar turno actual para saber hora_inicio/hora_fin ──
+    const turnoResult = await pool.query('SELECT * FROM seguridad_turnos WHERE id = $1', [turno_id]);
+    if (!turnoResult.rows.length) return res.status(400).json({ success: false, error: 'Turno no válido' });
+    const turno = turnoResult.rows[0];
+
+    // ── Verificar asignaciones existentes del guardia ──
+    const asigExistentes = await pool.query(
+      `SELECT c.*, t.hora_inicio, t.hora_fin, t.nombre AS turno_nombre, p.nombre AS punto_nombre
+       FROM seguridad_calendario c
+       JOIN seguridad_turnos t ON t.id = c.turno_id
+       JOIN seguridad_puntos p ON p.id = c.punto_id
+       WHERE c.guardia_id = $1
+       AND c.fecha BETWEEN ($2::date - interval '1 day') AND ($2::date + interval '1 day')`,
+      [guardia_id, fecha]
+    );
+
+    const advertencias = [];
+
+    for (const asig of asigExistentes.rows) {
+      const mismaFecha = asig.fecha.toISOString().startsWith(fecha);
+
+      // Regla 1: mismo día, punto distinto
+      if (mismaFecha && asig.punto_id !== parseInt(punto_id)) {
+        advertencias.push(`El guardia ya está asignado en ${asig.punto_nombre} el mismo día`);
+      }
+
+      // Regla 2: turno consecutivo mismo día
+      if (mismaFecha) {
+        const horaFinAsig = asig.hora_fin;
+        const horaInicioNuevo = turno.hora_inicio;
+        const horaFinNuevo = turno.hora_fin;
+        const horaInicioAsig = asig.hora_inicio;
+        if (horaFinAsig === horaInicioNuevo || horaFinNuevo === horaInicioAsig) {
+          advertencias.push(`Turno consecutivo: ${asig.turno_nombre} y ${turno.nombre} en el mismo día (${Math.abs(16)} hrs seguidas)`);
+        }
+      }
+
+      // Regla 3: turno consecutivo entre días (nocturno anterior + matutino siguiente)
+      const fechaAsig = new Date(asig.fecha);
+      const fechaNueva = new Date(fecha);
+      const diffDias = Math.round((fechaNueva - fechaAsig) / (1000 * 60 * 60 * 24));
+      if (Math.abs(diffDias) === 1) {
+        // Nocturno termina a las 06:00 del día siguiente
+        const esNocturnoAnterior = asig.hora_inicio === '22:00:00' && diffDias === 1;
+        const esMatutinoSiguiente = turno.hora_inicio === '06:00:00' && diffDias === 1;
+        const esNocturnoNuevo = turno.hora_inicio === '22:00:00' && diffDias === -1;
+        const esMatutinoAnterior = asig.hora_inicio === '06:00:00' && diffDias === -1;
+        if ((esNocturnoAnterior && esMatutinoSiguiente) || (esNocturnoNuevo && esMatutinoAnterior)) {
+          advertencias.push(`Turno consecutivo entre días: nocturno y matutino con menos de 8 horas de descanso`);
+        }
+      }
+    }
+
+    // Regla 4: más de 6 días consecutivos
+    const semanaResult = await pool.query(
+      `SELECT COUNT(DISTINCT fecha) as dias
+       FROM seguridad_calendario
+       WHERE guardia_id = $1
+       AND fecha BETWEEN ($2::date - interval '6 days') AND $2::date`,
+      [guardia_id, fecha]
+    );
+    if (parseInt(semanaResult.rows[0].dias) >= 6) {
+      advertencias.push('El guardia llevaría 7 o más días consecutivos trabajando sin descanso');
+    }
+
+    // Si hay advertencias y no viene nota_excepcion, devolver advertencias para que el frontend las muestre
+    if (advertencias.length > 0 && !nota_excepcion) {
+      return res.status(409).json({
+        success: false,
+        advertencias,
+        requiere_nota: true,
+        error: 'Se detectaron conflictos de asignación'
+      });
+    }
+
+    // Guardar asignación
     const result = await pool.query(
-      `INSERT INTO seguridad_calendario (guardia_id, turno_id, punto_id, fecha, created_by)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO seguridad_calendario (guardia_id, turno_id, punto_id, fecha, created_by, nota_excepcion, es_cobertura)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (guardia_id, fecha, turno_id) DO UPDATE
-         SET punto_id = EXCLUDED.punto_id, created_by = EXCLUDED.created_by
+         SET punto_id = EXCLUDED.punto_id,
+             created_by = EXCLUDED.created_by,
+             nota_excepcion = EXCLUDED.nota_excepcion,
+             es_cobertura = EXCLUDED.es_cobertura
        RETURNING *`,
-      [guardia_id, turno_id, punto_id, fecha, req.user.id]
+      [guardia_id, turno_id, punto_id, fecha, req.user.id, nota_excepcion || null, es_cobertura || false]
     );
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) {
