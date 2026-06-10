@@ -381,7 +381,7 @@ router.post('/', verifyToken, esAdminOGuardia, async (req, res) => {
 });
 
 // ─── GET /api/bitacoras ───────────────────────────────────────────────────────
-router.get('/', esAdmin, async (req, res) => {
+router.get('/', verifyToken, esAdminOGuardia, async (req, res) => {
   try {
     const page  = Math.max(1, parseInt(req.query.page)  || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
