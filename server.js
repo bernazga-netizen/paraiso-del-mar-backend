@@ -12,6 +12,7 @@ const historialRouter = require('./routes-historial');
 const inhouseRouter  = require('./routes-inhouse');
 const bitacorasRouter = require('./routes-bitacoras'); // ← NUEVO
 const seguridadAuthRoutes = require('./routes-seguridad-auth');
+const seguridadRoutes = require('./routes-seguridad');
 
 const app = express();
 const server = http.createServer(app);
@@ -60,6 +61,7 @@ app.use('/api/historial', historialRouter);
 app.use('/api/inhouse',   inhouseRouter);
 app.use('/api/bitacoras', verifyToken, bitacorasRouter);
 app.use('/api/seguridad/auth', seguridadAuthRoutes);
+app.use('/api/seguridad', seguridadRoutes);
 
 // Crear tabla de auditoría si no existe
 pool.query(`
