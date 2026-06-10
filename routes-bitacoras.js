@@ -159,7 +159,21 @@ router.post('/upload-foto', verifyToken, esAdminOGuardia, upload.single('foto'),
 });
 
 // GET /api/bitacoras/export
-router.get('/export', esAdmin, async (req, res) => {
+router.get('/export', async (req, res) => {
+  const tokenHeader = req.headers['authorization']?.replace('Bearer ', '');
+  const tokenQuery  = req.query.token;
+  const token = tokenHeader || tokenQuery;
+  if (!token) return res.status(401).json({ success: false, error: 'Token requerido' });
+  try {
+    const jwt = require('jsonwebtoken');
+    const { JWT_SECRET } = require('./middlewares/auth');
+    req.user = jwt.verify(token, JWT_SECRET);
+  } catch(e) {
+    return res.status(401).json({ success: false, error: 'Token inválido' });
+  }
+  if (req.user.rol !== 'admin' && req.user.rol !== 'supervisor') {
+    return res.status(403).json({ success: false, error: 'Acceso denegado' });
+  }
   try {
     const base = ['b.deleted_at IS NULL'];
     const { conds, vals } = buildFiltros(req.query, [], base);
