@@ -46,7 +46,7 @@ function esAdmin(req, res, next) {
 function esAdminOGuardia(req, res, next) {
   const u = req.user;
   if (!u) return res.status(401).json({ success: false, error: 'No autenticado' });
-  if (u.rol === 'admin' || u.es_guardia === true) return next();
+  if (u.rol === 'admin' || u.rol === 'supervisor' || u.rol === 'guardia') return next();
   return res.status(403).json({ success: false, error: 'Acceso restringido a guardias y administradores' });
 }
 
@@ -175,7 +175,7 @@ router.get('/export', esAdmin, async (req, res) => {
         b.observaciones,
         b.foto_url
       FROM bitacoras_registros b
-      JOIN inhouse_usuarios u ON u.id = b.guardia_id
+      JOIN seguridad_usuarios u ON u.id = b.guardia_id
       WHERE ${conds.join(' AND ')}
       ORDER BY b.created_at DESC
     `;
@@ -404,7 +404,7 @@ router.get('/', esAdmin, async (req, res) => {
          b.observaciones, b.foto_url, b.created_at,
          u.nombre AS guardia_nombre
        FROM bitacoras_registros b
-       JOIN inhouse_usuarios u ON u.id = b.guardia_id
+       JOIN seguridad_usuarios u ON u.id = b.guardia_id
        WHERE ${conds.join(' AND ')}
        ORDER BY b.created_at DESC
        LIMIT $${vals.length - 1} OFFSET $${vals.length}`,
@@ -441,8 +441,8 @@ router.get('/:id', esAdmin, async (req, res) => {
          u.nombre  AS guardia_nombre,
          ue.nombre AS guardia_entrante_nombre
        FROM bitacoras_registros b
-       JOIN inhouse_usuarios u   ON u.id  = b.guardia_id
-       LEFT JOIN inhouse_usuarios ue ON ue.id = b.guardia_entrante_id
+       JOIN seguridad_usuarios u   ON u.id  = b.guardia_id
+       LEFT JOIN seguridad_usuarios ue ON ue.id = b.guardia_entrante_id
        WHERE b.id = $1`,
       [id]
     );
