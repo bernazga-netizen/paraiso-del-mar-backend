@@ -442,7 +442,7 @@ router.get('/', verifyToken, esAdminOGuardia, async (req, res) => {
 });
 
 // ─── GET /api/bitacoras/:id ───────────────────────────────────────────────────
-router.get('/:id', esAdmin, async (req, res) => {
+router.get('/:id', verifyToken, esAdminOGuardia, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id || isNaN(id)) {
     return res.status(400).json({ success: false, error: 'ID inválido' });
@@ -473,7 +473,7 @@ router.get('/:id', esAdmin, async (req, res) => {
 });
 
 // ─── GET /api/bitacoras/:id/auditoria ────────────────────────────────────────
-router.get('/:id/auditoria', esAdmin, async (req, res) => {
+router.get('/:id/auditoria', verifyToken, esAdminOGuardia, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id || isNaN(id)) {
     return res.status(400).json({ success: false, error: 'ID inválido' });
