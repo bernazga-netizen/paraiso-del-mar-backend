@@ -59,7 +59,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api/auth',      authRouter);
 app.use('/api/historial', historialRouter);
 app.use('/api/inhouse',   inhouseRouter);
-app.use('/api/bitacoras', verifyToken, bitacorasRouter);
+app.use('/api/bitacoras', bitacorasRouter);
 app.use('/api/seguridad/auth', seguridadAuthRoutes);
 app.use('/api/seguridad', seguridadRoutes);
 
