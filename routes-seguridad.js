@@ -143,7 +143,7 @@ router.get('/calendario', verifyToken, esAdminOSupervisor, async (req, res) => {
     if (!fecha_inicio || !fecha_fin) return res.status(400).json({ success: false, error: 'fecha_inicio y fecha_fin son requeridos' });
 
     const result = await pool.query(
-      `SELECT c.id, c.fecha,
+      `SELECT c.id, c.fecha, c.nota_excepcion, c.es_cobertura,
               u.id AS guardia_id, u.nombre AS guardia_nombre, u.rol AS guardia_rol,
               t.id AS turno_id, t.nombre AS turno_nombre, t.hora_inicio, t.hora_fin,
               p.id AS punto_id, p.nombre AS punto_nombre
