@@ -22,6 +22,7 @@ const io = socketIo(server, {
       'https://paraiso-del-mar-app-web.vercel.app',
       'https://paraiso-del-mar-dashboard.vercel.app',
       'https://paraiso-del-mar-seguridad.vercel.app',
+      'https://app.paraisodelmar.com',
       'http://localhost:3000',
       'http://localhost:5500'
     ],
@@ -38,6 +39,7 @@ const allowedOrigins = [
   'https://paraiso-del-mar-app-web.vercel.app',
   'https://paraiso-del-mar-dashboard.vercel.app',
   'https://paraiso-del-mar-seguridad.vercel.app',
+  'https://app.paraisodelmar.com',
   'http://localhost:3000',
   'http://localhost:5500'
 ];
