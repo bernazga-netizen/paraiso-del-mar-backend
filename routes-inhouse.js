@@ -175,7 +175,7 @@ router.get('/disponibilidad', async (req, res) => {
     }
 
     const result = await pool.query(`
-      SELECT unidad, nombre_huesped, fecha_ingreso, fecha_salida
+      SELECT unidad, tipo, nombre_huesped, fecha_ingreso, fecha_salida
       FROM inhouse_registros
       WHERE UPPER(unidad) = ANY($1)
         AND fecha_ingreso < $3
@@ -190,6 +190,7 @@ router.get('/disponibilidad', async (req, res) => {
       return res.json({
         ok: true,
         disponible: false,
+        tipo: traslape.tipo,
         detalle: `${traslape.nombre_huesped} (${traslape.unidad}) · ${fi} → ${fs}`
       });
     }
