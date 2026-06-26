@@ -41,7 +41,8 @@ const allowedOrigins = [
   'https://paraiso-del-mar-seguridad.vercel.app',
   'https://app.paraisodelmar.com',
   'http://localhost:3000',
-  'http://localhost:5500'
+  'http://localhost:5500',
+  'https://paraiso-del-mar-dashboard-hmtjpxjkk-bernazga-netizens-projects.vercel.app'
 ];
 
 app.use(cors({
