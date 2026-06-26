@@ -377,7 +377,7 @@ router.get('/', async (req, res) => {
     let p = 1;
 
     if (estado === 'salida') {
-      where.push(`r.fecha_salida < CURRENT_DATE`);
+      where.push(`r.fecha_salida <= CURRENT_DATE`);
       if (fecha_inicio) { where.push(`r.fecha_salida >= $${p++}`); params.push(fecha_inicio); }
       if (fecha_fin)    { where.push(`r.fecha_salida <= $${p++}`); params.push(fecha_fin); }
     } else if (estado === 'futuro') {
