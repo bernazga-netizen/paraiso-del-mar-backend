@@ -397,12 +397,15 @@ router.get('/', async (req, res) => {
     if (pm)       { where.push(`r.property_manager_id = $${p++}`); params.push(parseInt(pm)); }
     if (q)        { where.push(`(r.nombre_huesped ILIKE $${p} OR r.unidad ILIKE $${p})`); params.push(`%${q}%`); p++; }
 
-    if (req.user.acceso_condominios === false || req.user.acceso_condominios === 'false') {
-      where.push(`r.edificio NOT IN ('A','B','C','D','E','F')`);
-    }
-    if (req.user.acceso_casas === false || req.user.acceso_casas === 'false') {
-      where.push(`r.edificio != 'Casa'`);
-    }
+    const { rows: [permisos] } = await pool.query(
+      'SELECT acceso_condominios, acceso_casas FROM inhouse_usuarios WHERE id = $1',
+      [req.user.id]
+    );
+    const accesoCondominios = permisos ? permisos.acceso_condominios : true;
+    const accesoCasas = permisos ? permisos.acceso_casas : true;
+
+    if (!accesoCondominios) where.push(`r.edificio NOT IN ('A','B','C','D','E','F')`);
+    if (!accesoCasas) where.push(`r.edificio != 'Casa'`);
 
     const excluirCasas = excluir_casas === 'true';
     const excluirCondominios = excluir_condominios === 'true';
