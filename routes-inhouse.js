@@ -336,7 +336,7 @@ async function verificarTraslape(unidad, fecha_ingreso, fecha_salida, excludeId 
     SELECT id, nombre_huesped, fecha_ingreso, fecha_salida
     FROM inhouse_registros
     WHERE UPPER(unidad) = $1
-      AND tipo != 'P'
+      AND tipo NOT IN ('P', 'H')
       AND fecha_ingreso < $3
       AND (fecha_salida IS NULL OR fecha_salida > $2)
       ${excludeClause}
