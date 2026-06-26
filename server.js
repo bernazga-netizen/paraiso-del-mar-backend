@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const http = require('http');
-const socketIo = require('socket.io');
+const { Server } = require('socket.io');
 require('dotenv').config();
 
 const { verifyToken } = require('./middlewares/auth');
@@ -16,19 +16,6 @@ const seguridadRoutes = require('./routes-seguridad');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: {
-    origin: [
-      'https://paraiso-del-mar-app-web.vercel.app',
-      'https://paraiso-del-mar-dashboard.vercel.app',
-      'https://paraiso-del-mar-seguridad.vercel.app',
-      'https://app.paraisodelmar.com',
-      'http://localhost:3000',
-      'http://localhost:5500'
-    ],
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
-  }
-});
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -50,6 +37,19 @@ const allowedOrigins = [
   'https://paraiso-del-mar-dashboard-vz6hgnmy8-bernazga-netizens-projects.vercel.app',
   'https://paraiso-del-mar-dashboard-3dvfeu3ef-bernazga-netizens-projects.vercel.app'
 ];
+
+const io = new Server(server, {
+  cors: {
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('CORS Socket.io bloqueado: ' + origin));
+      }
+    },
+    methods: ['GET', 'POST']
+  }
+});
 
 app.use(cors({
   origin: (origin, callback) => {
