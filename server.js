@@ -46,7 +46,8 @@ const allowedOrigins = [
   'https://paraiso-del-mar-dashboard-cdoi97sb4-bernazga-netizens-projects.vercel.app',
   'https://paraiso-del-mar-dashboard-k1tb4g2sb-bernazga-netizens-projects.vercel.app',
   'https://paraiso-del-mar-dashboard-l7kmk3y34-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-e6wwuc2d9-bernazga-netizens-projects.vercel.app'
+  'https://paraiso-del-mar-dashboard-e6wwuc2d9-bernazga-netizens-projects.vercel.app',
+  'https://paraiso-del-mar-dashboard-vz6hgnmy8-bernazga-netizens-projects.vercel.app'
 ];
 
 app.use(cors({
