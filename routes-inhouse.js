@@ -370,7 +370,7 @@ const CAMPOS_AUDITABLES = {
 // ── 1. GET /api/inhouse — lista con filtros ─────────────────
 router.get('/', async (req, res) => {
   try {
-    const { estado, edificio, tipo, pm, q, fecha_inicio, fecha_fin, limit = 100, offset = 0 } = req.query;
+    const { estado, edificio, tipo, pm, q, fecha_inicio, fecha_fin, excluir_casas, excluir_condominios, limit = 100, offset = 0 } = req.query;
 
     let where = [];
     const params = [];
@@ -403,6 +403,11 @@ router.get('/', async (req, res) => {
     if (req.user.acceso_casas === false) {
       where.push(`r.edificio != 'Casa'`);
     }
+
+    const excluirCasas = excluir_casas === 'true';
+    const excluirCondominios = excluir_condominios === 'true';
+    if (excluirCasas) where.push(`r.edificio != 'Casa'`);
+    if (excluirCondominios) where.push(`r.edificio NOT IN ('A','B','C','D','E','F')`);
 
     const whereStr = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
