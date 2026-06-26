@@ -421,7 +421,7 @@ router.get('/', async (req, res) => {
       FROM inhouse_registros r
       LEFT JOIN inhouse_property_managers pm ON pm.id = r.property_manager_id
       ${whereStr}
-      ORDER BY r.fecha_ingreso DESC
+      ORDER BY r.fecha_ingreso ${estado === 'futuro' ? 'ASC' : 'DESC'}
       LIMIT $${p} OFFSET $${p+1}
     `;
     params.push(parseInt(limit), parseInt(offset));
