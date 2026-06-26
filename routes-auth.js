@@ -218,7 +218,7 @@ router.put('/usuarios/:id', verifyToken, requireAdmin, async (req, res) => {
 router.get('/usuarios-publico', async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT nombre FROM inhouse_usuarios WHERE activo = TRUE ORDER BY nombre`
+      `SELECT id, nombre FROM inhouse_usuarios WHERE activo = TRUE ORDER BY nombre ASC`
     );
     res.json({ ok: true, data: r.rows });
   } catch (err) {
