@@ -397,10 +397,14 @@ router.get('/', async (req, res) => {
     if (pm)       { where.push(`r.property_manager_id = $${p++}`); params.push(parseInt(pm)); }
     if (q)        { where.push(`(r.nombre_huesped ILIKE $${p} OR r.unidad ILIKE $${p})`); params.push(`%${q}%`); p++; }
 
+    console.log('DEBUG permisos - req.user:', req.user);
+
     const { rows: [permisos] } = await pool.query(
       'SELECT acceso_condominios, acceso_casas FROM inhouse_usuarios WHERE id = $1',
       [req.user.id]
     );
+
+    console.log('DEBUG permisos - resultado:', permisos);
     const accesoCondominios = permisos ? permisos.acceso_condominios : true;
     const accesoCasas = permisos ? permisos.acceso_casas : true;
 
