@@ -397,6 +397,13 @@ router.get('/', async (req, res) => {
     if (pm)       { where.push(`r.property_manager_id = $${p++}`); params.push(parseInt(pm)); }
     if (q)        { where.push(`(r.nombre_huesped ILIKE $${p} OR r.unidad ILIKE $${p})`); params.push(`%${q}%`); p++; }
 
+    if (req.user.acceso_condominios === false) {
+      where.push(`r.edificio NOT IN ('A','B','C','D','E','F')`);
+    }
+    if (req.user.acceso_casas === false) {
+      where.push(`r.edificio != 'Casa'`);
+    }
+
     const whereStr = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
     const sql = `

@@ -108,7 +108,7 @@ router.post('/login', async (req, res) => {
     );
 
     const token = jwt.sign(
-      { id: u.id, nombre: u.nombre, rol: u.rol, es_guardia: u.es_guardia }, // ← ACTUALIZADO
+      { id: u.id, nombre: u.nombre, rol: u.rol, es_guardia: u.es_guardia, acceso_condominios: u.acceso_condominios, acceso_casas: u.acceso_casas },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
@@ -117,11 +117,13 @@ router.post('/login', async (req, res) => {
       ok: true,
       token,
       usuario: {
-        id:         u.id,
-        nombre:     u.nombre,
-        email:      u.email,
-        rol:        u.rol,
-        es_guardia: u.es_guardia // ← ACTUALIZADO
+        id:                 u.id,
+        nombre:             u.nombre,
+        email:              u.email,
+        rol:                u.rol,
+        es_guardia:         u.es_guardia,
+        acceso_condominios: u.acceso_condominios,
+        acceso_casas:       u.acceso_casas
       }
     });
   } catch (err) {
@@ -134,13 +136,45 @@ router.post('/login', async (req, res) => {
 router.get('/usuarios', verifyToken, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, nombre, email, rol, activo, es_guardia, created_at, last_login,
-              (password_hash IS NOT NULL) AS tiene_password
-       FROM inhouse_usuarios ORDER BY nombre` // ← ACTUALIZADO
+      `SELECT id, nombre, email, rol, activo, es_guardia, acceso_condominios, acceso_casas,
+              created_at, last_login, (password_hash IS NOT NULL) AS tiene_password
+       FROM inhouse_usuarios ORDER BY nombre`
     );
     res.json({ ok: true, data: r.rows });
   } catch (err) {
     console.error('get usuarios:', err);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
+// ── POST /api/auth/usuarios — crear usuario (solo admin) ─────
+router.post('/usuarios', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const nombre = sanitizarNombre(req.body.nombre);
+    const { email, password, rol } = req.body;
+    const acceso_condominios = req.body.acceso_condominios !== false;
+    const acceso_casas       = req.body.acceso_casas       !== false;
+
+    if (!nombre) return res.status(400).json({ ok: false, error: 'nombre es requerido' });
+    if (!email || typeof email !== 'string') return res.status(400).json({ ok: false, error: 'email es requerido' });
+    if (!['usuario', 'gerente', 'admin'].includes(rol)) return res.status(400).json({ ok: false, error: 'rol inválido' });
+
+    const errPass = validarPassword(password);
+    if (errPass) return res.status(400).json({ ok: false, error: errPass });
+
+    const existe = await pool.query(`SELECT id FROM inhouse_usuarios WHERE nombre ILIKE $1`, [nombre]);
+    if (existe.rows.length) return res.status(409).json({ ok: false, error: 'Ya existe un usuario con ese nombre' });
+
+    const hash = await bcrypt.hash(password, 10);
+    const r = await pool.query(
+      `INSERT INTO inhouse_usuarios (nombre, email, password_hash, rol, acceso_condominios, acceso_casas)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, nombre, email, rol, acceso_condominios, acceso_casas`,
+      [nombre, email.trim().substring(0, 200), hash, rol, acceso_condominios, acceso_casas]
+    );
+    res.status(201).json({ ok: true, data: r.rows[0] });
+  } catch (err) {
+    console.error('crear usuario:', err);
     res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
