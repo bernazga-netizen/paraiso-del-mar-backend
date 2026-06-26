@@ -437,6 +437,7 @@ router.get('/ocupacion', async (req, res) => {
     const [hoy, totales, porTipoHoy] = await Promise.all([
       pool.query(`
         SELECT edificio,
+          COUNT(*) AS unidades_total,
           COUNT(*) FILTER (WHERE tipo = 'H') AS homeowners,
           COUNT(*) FILTER (WHERE tipo = 'R') AS renters,
           COUNT(*) FILTER (WHERE tipo = 'G') AS guests,
