@@ -31,10 +31,12 @@ const allowedOrigins = [
   'http://localhost:5500'
 ];
 
-// Previews de Vercel: cada deploy genera un subdominio distinto
-// (ej. paraiso-del-mar-dashboard-hmtjpxjkk-bernazga-netizens-projects.vercel.app)
+// Previews de Vercel: cada deploy genera un subdominio distinto y Vercel trunca
+// el nombre del proyecto cuando el team slug es largo (bernazga-netizens-projects),
+// por lo que se valida el prefijo común + team slug en vez del nombre exacto del proyecto
+// (ej. paraiso-del-mar-app-8rwzsnrst-bernazga-netizens-projects.vercel.app)
 const allowedOriginPatterns = [
-  /^https:\/\/paraiso-del-mar-(app-web|dashboard|seguridad)-[a-z0-9-]+\.vercel\.app$/
+  /^https:\/\/paraiso-del-mar-[a-z0-9-]+-bernazga-netizens-projects\.vercel\.app$/
 ];
 
 function isOriginAllowed(origin) {
