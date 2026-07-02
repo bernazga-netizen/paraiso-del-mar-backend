@@ -132,12 +132,13 @@ app.get('/api/test/crear-muestra', verifyToken, async (req, res) => {
 app.post('/api/registros', async (req, res) => {
     try {
         const { fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura } = req.body;
+        const tipo_movimiento = req.body.tipo_movimiento === 'salida' ? 'salida' : 'entrada';
 
         if (tipo_persona === 'Proveedor') {
             const horaNum = parseInt(hora.split(':')[0]);
             if (horaNum >= 16) {
-                return res.status(400).json({ 
-                    error: 'Los proveedores no pueden ingresar después de las 4:00 PM' 
+                return res.status(400).json({
+                    error: 'Los proveedores no pueden ingresar después de las 4:00 PM'
                 });
             }
         }
@@ -145,21 +146,22 @@ app.post('/api/registros', async (req, res) => {
         const timestamp = Date.now();
 
         const resultRegistro = await pool.query(
-            'INSERT INTO registros (fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
-            [fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura, timestamp]
+            'INSERT INTO registros (fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura, timestamp, tipo_movimiento) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+            [fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura, timestamp, tipo_movimiento]
         );
 
         await pool.query(
-            'INSERT INTO auditoria (fecha, hora, acceso, tipo_persona, cantidad, usuario_captura) VALUES ($1, $2, $3, $4, $5, $6)',
-            [fecha, hora, acceso, tipo_persona, cantidad, usuario_captura]
+            'INSERT INTO auditoria (fecha, hora, acceso, tipo_persona, cantidad, usuario_captura, tipo_movimiento) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [fecha, hora, acceso, tipo_persona, cantidad, usuario_captura, tipo_movimiento]
         );
 
-        io.emit('nuevoRegistro', { 
-            fecha, 
-            hora, 
-            acceso, 
-            tipo_persona, 
-            cantidad 
+        io.emit('nuevoRegistro', {
+            fecha,
+            hora,
+            acceso,
+            tipo_persona,
+            cantidad,
+            tipo_movimiento
         });
 
         res.json({ 
@@ -180,6 +182,14 @@ app.get('/api/estadisticas/:fecha', async (req, res) => {
             'SELECT COALESCE(SUM(cantidad), 0) as total FROM registros WHERE fecha = $1',
             [fecha]
         );
+
+        const porMovimiento = await pool.query(
+            'SELECT tipo_movimiento, COALESCE(SUM(cantidad), 0) as total FROM registros WHERE fecha = $1 GROUP BY tipo_movimiento',
+            [fecha]
+        );
+
+        const entradas = porMovimiento.rows.find(r => r.tipo_movimiento === 'entrada');
+        const salidas = porMovimiento.rows.find(r => r.tipo_movimiento === 'salida');
 
         const porAcceso = await pool.query(
             'SELECT acceso, SUM(cantidad) as total FROM registros WHERE fecha = $1 GROUP BY acceso ORDER BY acceso',
@@ -203,6 +213,8 @@ app.get('/api/estadisticas/:fecha', async (req, res) => {
 
         res.json({
             total: parseInt(total.rows[0].total),
+            entradas: entradas ? parseInt(entradas.total) : 0,
+            salidas: salidas ? parseInt(salidas.total) : 0,
             porAcceso: porAcceso.rows,
             porTipo: porTipo.rows,
             porHora: porHora.rows,
