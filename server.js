@@ -205,12 +205,15 @@ app.get('/api/estadisticas/:fecha', async (req, res) => {
         );
 
         const porHora = await pool.query(
-            'SELECT hora, SUM(cantidad) as total FROM registros WHERE fecha = $1 GROUP BY hora ORDER BY hora',
+            `SELECT hora,
+                COALESCE(SUM(cantidad) FILTER (WHERE tipo_movimiento = 'entrada'), 0) as entradas,
+                COALESCE(SUM(cantidad) FILTER (WHERE tipo_movimiento = 'salida'), 0) as salidas
+             FROM registros WHERE fecha = $1 GROUP BY hora ORDER BY hora`,
             [fecha]
         );
 
         const detalladoPorAccesoYTipo = await pool.query(
-            'SELECT acceso, tipo_persona, SUM(cantidad) as total FROM registros WHERE fecha = $1 GROUP BY acceso, tipo_persona ORDER BY acceso, tipo_persona',
+            'SELECT acceso, tipo_persona, tipo_movimiento, SUM(cantidad) as total FROM registros WHERE fecha = $1 GROUP BY acceso, tipo_persona, tipo_movimiento ORDER BY acceso, tipo_persona',
             [fecha]
         );
 
