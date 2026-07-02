@@ -270,7 +270,7 @@ app.get('/api/registros', verifyToken, async (req, res) => {
 
 app.get('/api/auditoria', verifyToken, async (req, res) => {
     try {
-        const { fecha_inicio, fecha_fin, acceso, tipo_persona, usuario_captura } = req.query;
+        const { fecha_inicio, fecha_fin, acceso, tipo_persona, tipo_movimiento, usuario_captura } = req.query;
         let query = 'SELECT * FROM auditoria WHERE 1=1';
         const params = [];
         let paramCount = 1;
@@ -296,6 +296,12 @@ app.get('/api/auditoria', verifyToken, async (req, res) => {
         if (tipo_persona) {
             query += ` AND tipo_persona = $${paramCount}`;
             params.push(tipo_persona);
+            paramCount++;
+        }
+
+        if (tipo_movimiento) {
+            query += ` AND tipo_movimiento = $${paramCount}`;
+            params.push(tipo_movimiento);
             paramCount++;
         }
 
