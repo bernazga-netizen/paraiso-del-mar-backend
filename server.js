@@ -28,24 +28,25 @@ const allowedOrigins = [
   'https://paraiso-del-mar-seguridad.vercel.app',
   'https://app.paraisodelmar.com',
   'http://localhost:3000',
-  'http://localhost:5500',
-  'https://paraiso-del-mar-dashboard-hmtjpxjkk-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-cdoi97sb4-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-k1tb4g2sb-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-l7kmk3y34-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-e6wwuc2d9-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-vz6hgnmy8-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-3dvfeu3ef-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-h9i1596co-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-lab0miub2-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-bjtrm4uj3-bernazga-netizens-projects.vercel.app',
-  'https://paraiso-del-mar-dashboard-ol0mwse9o-bernazga-netizens-projects.vercel.app'
+  'http://localhost:5500'
 ];
+
+// Previews de Vercel: cada deploy genera un subdominio distinto
+// (ej. paraiso-del-mar-dashboard-hmtjpxjkk-bernazga-netizens-projects.vercel.app)
+const allowedOriginPatterns = [
+  /^https:\/\/paraiso-del-mar-(app-web|dashboard|seguridad)-[a-z0-9-]+\.vercel\.app$/
+];
+
+function isOriginAllowed(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  return allowedOriginPatterns.some(pattern => pattern.test(origin));
+}
 
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (isOriginAllowed(origin)) {
         callback(null, true);
       } else {
         callback(new Error('CORS Socket.io bloqueado: ' + origin));
@@ -57,7 +58,7 @@ const io = new Server(server, {
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (isOriginAllowed(origin)) {
       callback(null, true);
     } else {
       callback(new Error('CORS bloqueado: origen no permitido'));
