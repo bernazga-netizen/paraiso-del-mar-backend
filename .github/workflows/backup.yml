@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  backup:
+  pg-dump:
     runs-on: ubuntu-latest
     steps:
       - name: Instalar PostgreSQL 17 client
@@ -26,3 +26,28 @@ jobs:
           name: neon-backup-${{ github.run_id }}
           path: backup-*.dump
           retention-days: 30
+
+  neon-branch-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crear branch de snapshot
+        run: |
+          curl -s --request POST \
+            --url "https://console.neon.tech/api/v2/projects/${{ secrets.NEON_PROJECT_ID }}/branches" \
+            --header "Authorization: Bearer ${{ secrets.NEON_API_KEY }}" \
+            --header "Content-Type: application/json" \
+            --data "{ \"branch\": { \"name\": \"auto-backup-$(date +%Y%m%d-%H%M)\" } }"
+
+      - name: Limpiar branches viejos (conservar los ultimos 6)
+        run: |
+          BRANCHES=$(curl -s --request GET \
+            --url "https://console.neon.tech/api/v2/projects/${{ secrets.NEON_PROJECT_ID }}/branches" \
+            --header "Authorization: Bearer ${{ secrets.NEON_API_KEY }}")
+
+          echo "$BRANCHES" | jq -r '.branches[] | select(.name | startswith("auto-backup-")) | "\(.created_at) \(.id)"' \
+            | sort -r | tail -n +7 | awk '{print $2}' | while read -r BRANCH_ID; do
+              echo "Borrando branch viejo: $BRANCH_ID"
+              curl -s --request DELETE \
+                --url "https://console.neon.tech/api/v2/projects/${{ secrets.NEON_PROJECT_ID }}/branches/$BRANCH_ID" \
+                --header "Authorization: Bearer ${{ secrets.NEON_API_KEY }}"
+            done
