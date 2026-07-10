@@ -9,12 +9,16 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Instalar cliente PostgreSQL
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Instalar PostgreSQL 17 client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
 
       - name: Generar dump
         run: |
-          pg_dump "${{ secrets.DATABASE_URL }}" -F c -f backup-$(date +%F_%H%M).dump
+          /usr/lib/postgresql/17/bin/pg_dump "${{ secrets.DATABASE_URL }}" -F c -f backup-$(date +%F_%H%M).dump
 
       - name: Subir como artifact
         uses: actions/upload-artifact@v4
