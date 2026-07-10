@@ -1,0 +1,24 @@
+name: Backup Neon DB
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instalar cliente PostgreSQL
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Generar dump
+        run: |
+          pg_dump "${{ secrets.DATABASE_URL }}" -F c -f backup-$(date +%F_%H%M).dump
+
+      - name: Subir como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-backup-${{ github.run_id }}
+          path: backup-*.dump
+          retention-days: 30
