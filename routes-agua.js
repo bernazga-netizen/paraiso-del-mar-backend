@@ -187,15 +187,31 @@ router.get('/ruta', ...lector, async (req, res) => {
     const periodo = await periodoAbierto(pool);
     if (!periodo) return res.status(404).json({ success: false, error: 'No hay periodo abierto' });
 
+    // Incluye qr_token, lectura anterior y promedio para que la PWA valide sin señal
     const r = await pool.query(
-      `SELECT m.id, m.unidad, m.tipo, m.unidad_lectura, m.digitos, m.lat, m.lng,
-              l.id AS lectura_id, l.estado, l.lectura_actual, l.consumo_m3, l.alertas
+      `SELECT m.id, m.unidad, m.tipo, m.unidad_lectura, m.digitos, m.lat, m.lng, m.qr_token,
+              l.id AS lectura_id, l.estado, l.lectura_actual, l.consumo_m3, l.alertas, l.lecturista_id, l.created_at AS lectura_creada,
+              ant.lectura_actual AS lectura_anterior, ROUND(pr.prom, 3) AS promedio_m3,
+              CASE WHEN l.estado = 'relectura' THEN (
+                SELECT a.motivo FROM agua_auditoria a
+                WHERE a.entidad = 'lectura' AND a.entidad_id = l.id AND a.accion = 'relectura'
+                ORDER BY a.created_at DESC LIMIT 1) END AS motivo_relectura
        FROM agua_medidores m
        LEFT JOIN agua_lecturas l
          ON l.medidor_id = m.id AND l.periodo_id = $1 AND l.deleted_at IS NULL
+       LEFT JOIN LATERAL (
+         SELECT l2.lectura_actual FROM agua_lecturas l2 JOIN agua_periodos p2 ON p2.id = l2.periodo_id
+         WHERE l2.medidor_id = m.id AND l2.deleted_at IS NULL AND l2.lectura_actual IS NOT NULL
+           AND (p2.anio * 12 + p2.mes) < ($2 * 12 + $3)
+         ORDER BY p2.anio DESC, p2.mes DESC LIMIT 1) ant ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT AVG(t.consumo_m3) AS prom FROM (
+           SELECT l3.consumo_m3 FROM agua_lecturas l3 JOIN agua_periodos p3 ON p3.id = l3.periodo_id
+           WHERE l3.medidor_id = m.id AND l3.deleted_at IS NULL AND p3.estado = 'cerrado' AND l3.consumo_m3 > 0
+           ORDER BY p3.anio DESC, p3.mes DESC LIMIT 3) t) pr ON TRUE
        WHERE m.deleted_at IS NULL
        ORDER BY m.tipo = 'casa' DESC, NULLIF(regexp_replace(m.unidad, '\\D', '', 'g'), '')::int NULLS LAST, m.unidad`,
-      [periodo.id]
+      [periodo.id, periodo.anio, periodo.mes]
     );
     const medidores = r.rows.map((x) => ({ ...x, estado: x.estado || 'pendiente' }));
     const resumen = medidores.reduce((acc, x) => { acc[x.estado] = (acc[x.estado] || 0) + 1; return acc; }, {});
