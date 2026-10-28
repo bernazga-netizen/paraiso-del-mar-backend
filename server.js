@@ -11,6 +11,7 @@ const authRouter     = require('./routes-auth');
 const historialRouter = require('./routes-historial');
 const inhouseRouter  = require('./routes-inhouse');
 const bitacorasRouter = require('./routes-bitacoras'); // ← NUEVO
+const aguaRouter = require('./routes-agua');
 const seguridadAuthRoutes = require('./routes-seguridad-auth');
 const seguridadRoutes = require('./routes-seguridad');
 
@@ -27,6 +28,8 @@ const allowedOrigins = [
   'https://paraiso-del-mar-dashboard.vercel.app',
   'https://paraiso-del-mar-seguridad.vercel.app',
   'https://app.paraisodelmar.com',
+  'https://paraiso-agua-admin.vercel.app',
+  'https://paraiso-agua-lecturas.vercel.app',
   'http://localhost:3000',
   'http://localhost:5500'
 ];
@@ -36,7 +39,8 @@ const allowedOrigins = [
 // por lo que se valida el prefijo común + team slug en vez del nombre exacto del proyecto
 // (ej. paraiso-del-mar-app-8rwzsnrst-bernazga-netizens-projects.vercel.app)
 const allowedOriginPatterns = [
-  /^https:\/\/paraiso-del-mar-[a-z0-9-]+-bernazga-netizens-projects\.vercel\.app$/
+  /^https:\/\/paraiso-del-mar-[a-z0-9-]+-bernazga-netizens-projects\.vercel\.app$/,
+  /^https:\/\/paraiso-agua-[a-z0-9-]+-bernazga-netizens-projects\.vercel\.app$/
 ];
 
 function isOriginAllowed(origin) {
@@ -76,6 +80,7 @@ app.use('/api/auth',      authRouter);
 app.use('/api/historial', historialRouter);
 app.use('/api/inhouse',   inhouseRouter);
 app.use('/api/bitacoras', bitacorasRouter);
+app.use('/api/agua', aguaRouter);
 app.use('/api/seguridad/auth', seguridadAuthRoutes);
 app.use('/api/seguridad', seguridadRoutes);
 

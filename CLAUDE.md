@@ -11,6 +11,7 @@
 - `routes-inhouse.js` — registros de huéspedes (CRUD completo)
 - `routes-historial.js` — estadísticas y auditoría de accesos
 - `routes-bitacoras.js` — bitácoras de seguridad (guardias)
+- `routes-agua.js` — lecturas de medidores de agua y cobro por volumen (`/api/agua`)
 - `middlewares/` — autenticación JWT
 - `reset-password.js` — utilidad para resetear contraseñas con bcryptjs
 
@@ -28,11 +29,13 @@
 - Login field: `nombre` (nombre completo, puede tener caracteres especiales)
 - Token key en cliente: `pdm_acceso_token` en `sessionStorage`
 - Roles: admin, recepcion, guardia
+- Módulo agua (inhouse_usuarios): `lecturista`, `admin_agua`; `admin`/`super_admin` = acceso total. Rechaza tokens con `sistema` (login de seguridad)
 
 ## Base de datos — prefijos de tablas
 - `accesos_*` — control de accesos físicos
 - `inhouse_*` — gestión de huéspedes
 - `bitacoras_*` — bitácoras de seguridad
+- `agua_*` — lecturas de agua (medidores, tarifas, periodos, lecturas, auditoría)
 - `tickets_*` — sistema de tickets (pendiente)
 
 ## Tipos de huésped
