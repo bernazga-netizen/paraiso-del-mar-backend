@@ -11,6 +11,7 @@ const authRouter     = require('./routes-auth');
 const historialRouter = require('./routes-historial');
 const inhouseRouter  = require('./routes-inhouse');
 const bitacorasRouter = require('./routes-bitacoras'); // ← NUEVO
+const aguaRouter = require('./routes-agua');
 const seguridadAuthRoutes = require('./routes-seguridad-auth');
 const seguridadRoutes = require('./routes-seguridad');
 
@@ -76,6 +77,7 @@ app.use('/api/auth',      authRouter);
 app.use('/api/historial', historialRouter);
 app.use('/api/inhouse',   inhouseRouter);
 app.use('/api/bitacoras', bitacorasRouter);
+app.use('/api/agua', aguaRouter);
 app.use('/api/seguridad/auth', seguridadAuthRoutes);
 app.use('/api/seguridad', seguridadRoutes);
 
