@@ -864,91 +864,319 @@ router.post('/periodos/:id/reabrir', ...superA, async (req, res) => {
   } finally { client.release(); }
 });
 
-// GET /api/agua/periodos/:id/export — Excel del periodo (admin)
-router.get('/periodos/:id/export', ...admin, async (req, res) => {
-  const id = num(req.params.id);
+// ─── Estado de cuenta del periodo ───────────────────────────────────────────
+// Una sola fuente para el tablero, los recibos y el Excel. Periodo cerrado: usa el cobro
+// congelado al cerrar (tarifa_snapshot). Periodo abierto: calcula con la tarifa vigente y
+// marca preliminar = true (los montos pueden cambiar hasta el cierre).
+const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const MESES_HISTORIAL = 6;
+
+function nivelAlcanzado(consumo, incluidos, tarifa) {
+  if (consumo === null) return null;
+  if (consumo <= incluidos) return 'Incluido';
+  for (const n of tarifa.niveles) {
+    if (n.hasta === null || consumo <= Number(n.hasta)) return `Nivel ${n.nivel}`;
+  }
+  return `Nivel ${tarifa.niveles[tarifa.niveles.length - 1].nivel}`;
+}
+
+async function estadoCuenta(db, periodoId) {
+  const pr = await db.query(`SELECT * FROM agua_periodos WHERE id = $1`, [periodoId]);
+  if (!pr.rows.length) return null;
+  const periodo = pr.rows[0];
+  const cerrado = periodo.estado === 'cerrado' && periodo.tarifa_snapshot;
+
+  let tarifa;
+  if (cerrado) {
+    tarifa = periodo.tarifa_snapshot;
+  } else {
+    const t = await tarifaVigente(db);
+    if (!t) return { periodo, error: 'No hay tarifa vigente' };
+    tarifa = { incluidos_m3: Number(t.incluidos_m3), moneda: t.moneda, niveles: t.niveles, tarifa_id: t.id };
+  }
+  const niveles = [...tarifa.niveles].sort((a, b) => a.nivel - b.nivel);
+  tarifa = { ...tarifa, niveles };
+
+  const clave = periodo.anio * 12 + periodo.mes;
+  const r = await db.query(
+    `SELECT m.id AS medidor_id, m.unidad, m.propietario, m.tipo, m.cobra, m.incluidos_m3, m.serie,
+            m.unidad_lectura AS unidad_medidor,
+            l.id AS lectura_id, l.lectura_anterior, l.lectura_actual, l.unidad_lectura, l.cambio_medidor,
+            l.lect_final_retirado, l.unidad_retirado, l.lect_inicial_nuevo, l.consumo_m3, l.cobro_usd,
+            l.detalle_niveles, l.estado, l.alertas, l.nota, l.foto_url, l.capturada_en,
+            u.nombre AS lecturista, ant.lectura_actual AS ultima_lectura
+     FROM agua_medidores m
+     LEFT JOIN agua_lecturas l ON l.medidor_id = m.id AND l.periodo_id = $1 AND l.deleted_at IS NULL
+     LEFT JOIN inhouse_usuarios u ON u.id = l.lecturista_id
+     LEFT JOIN LATERAL (
+       SELECT l2.lectura_actual FROM agua_lecturas l2 JOIN agua_periodos p2 ON p2.id = l2.periodo_id
+       WHERE l2.medidor_id = m.id AND l2.deleted_at IS NULL AND l2.lectura_actual IS NOT NULL
+         AND (p2.anio * 12 + p2.mes) < $2
+       ORDER BY p2.anio DESC, p2.mes DESC LIMIT 1) ant ON TRUE
+     WHERE m.deleted_at IS NULL
+     ORDER BY m.tipo = 'casa' DESC, NULLIF(regexp_replace(m.unidad, '\\D', '', 'g'), '')::int NULLS LAST, m.unidad`,
+    [periodo.id, clave]
+  );
+
+  const h = await db.query(
+    `SELECT l.medidor_id, p.anio, p.mes, l.consumo_m3
+     FROM agua_lecturas l JOIN agua_periodos p ON p.id = l.periodo_id
+     WHERE l.deleted_at IS NULL AND (p.anio * 12 + p.mes) BETWEEN $1 AND $2
+     ORDER BY p.anio, p.mes`,
+    [clave - (MESES_HISTORIAL - 1), clave]
+  );
+  const historial = {};
+  for (const x of h.rows) (historial[x.medidor_id] ||= []).push({ anio: x.anio, mes: x.mes, consumo_m3: num(x.consumo_m3) });
+
+  const vacio = () => ({ consumo_m3: 0, excedente_m3: 0, cobro_usd: 0, niveles: niveles.map((n) => ({ nivel: n.nivel, m3: 0, usd: 0 })), medidores: 0, con_lectura: 0, con_excedente: 0 });
+  const grupos = { casas: vacio(), otros: vacio() };
+  const distribucion = {};
+  ['Incluido', ...niveles.map((n) => `Nivel ${n.nivel}`)].forEach((k) => { distribucion[k] = { unidades: 0, cobro_usd: 0 }; });
+  const conteo = { medidores: r.rows.length, con_lectura: 0, sin_lectura: 0, con_alerta: 0, relectura: 0, validada: 0, aprobada: 0, cerrada: 0 };
+
+  const filas = r.rows.map((x) => {
+    const consumo = num(x.consumo_m3);
+    const incluidos = Number(x.incluidos_m3);
+    const tieneLectura = x.lectura_id !== null && num(x.lectura_actual) !== null;
+    let detalle;
+    let cobro;
+    if (cerrado && x.detalle_niveles) {
+      detalle = x.detalle_niveles;
+      cobro = num(x.cobro_usd) || 0;
+    } else {
+      const c = calcularCobro(consumo, incluidos, x.cobra, tarifa);
+      detalle = c.detalle;
+      cobro = c.total;
+    }
+    const nivelesFila = niveles.map((n) => {
+      const d = detalle[`nivel_${n.nivel}`] || { m3: 0, usd: 0 };
+      return { nivel: n.nivel, m3: num(d.m3) || 0, usd: num(d.usd) || 0 };
+    });
+    const excedente = consumo === null ? null : redondear(Math.max(0, consumo - incluidos));
+    const nivel = nivelAlcanzado(consumo, incluidos, tarifa);
+
+    if (tieneLectura) conteo.con_lectura += 1; else conteo.sin_lectura += 1;
+    if (x.estado && conteo[x.estado] !== undefined) conteo[x.estado] += 1;
+
+    const g = grupos[x.tipo === 'casa' ? 'casas' : 'otros'];
+    g.medidores += 1;
+    if (tieneLectura) g.con_lectura += 1;
+    if (x.cobra && consumo !== null) {
+      g.consumo_m3 += consumo;
+      g.excedente_m3 += excedente;
+      g.cobro_usd += cobro;
+      nivelesFila.forEach((nf, i) => { g.niveles[i].m3 += nf.m3; g.niveles[i].usd += nf.usd; });
+      if (excedente > 0) g.con_excedente += 1;
+      if (x.tipo === 'casa' && nivel && distribucion[nivel]) { distribucion[nivel].unidades += 1; distribucion[nivel].cobro_usd += cobro; }
+    }
+
+    return {
+      medidor_id: x.medidor_id, unidad: x.unidad, propietario: x.propietario, tipo: x.tipo, cobra: x.cobra, serie: x.serie,
+      incluidos_m3: incluidos, unidad_lectura: x.unidad_lectura || x.unidad_medidor,
+      lectura_id: x.lectura_id,
+      lectura_anterior: num(x.lectura_anterior) ?? num(x.ultima_lectura),
+      lectura_actual: num(x.lectura_actual),
+      cambio_medidor: !!x.cambio_medidor, lect_final_retirado: num(x.lect_final_retirado),
+      unidad_retirado: x.unidad_retirado, lect_inicial_nuevo: num(x.lect_inicial_nuevo),
+      consumo_m3: consumo, excedente_m3: excedente, niveles: nivelesFila,
+      cobro_usd: x.cobra ? cobro : 0, nivel,
+      estado: x.estado || 'sin_lectura', alertas: x.alertas || [], nota: x.nota,
+      foto_url: x.foto_url, capturada_en: x.capturada_en, lecturista: x.lecturista,
+      historial: historial[x.medidor_id] || []
+    };
+  });
+
+  const r2 = (v) => Math.round(v * 100) / 100;
+  for (const g of Object.values(grupos)) {
+    g.consumo_m3 = redondear(g.consumo_m3); g.excedente_m3 = redondear(g.excedente_m3); g.cobro_usd = r2(g.cobro_usd);
+    g.niveles.forEach((n) => { n.m3 = redondear(n.m3); n.usd = r2(n.usd); });
+  }
+  Object.values(distribucion).forEach((d) => { d.cobro_usd = r2(d.cobro_usd); });
+  const entrada = num(periodo.entrada_cisterna_m3);
+
+  return {
+    periodo: { ...periodo, nombre: `${MESES[periodo.mes - 1]} ${periodo.anio}` },
+    preliminar: !cerrado,
+    tarifa,
+    filas,
+    conteo,
+    grupos,
+    distribucion,
+    total_usd: r2(grupos.casas.cobro_usd + grupos.otros.cobro_usd),
+    balance: {
+      entrada_cisterna_m3: entrada,
+      consumo_casas_m3: grupos.casas.consumo_m3,
+      no_contabilizado_pct: entrada ? Math.round((1 - grupos.casas.consumo_m3 / entrada) * 1000) / 10 : null
+    }
+  };
+}
+
+// GET /api/agua/periodos/:id/estado-cuenta — tablero, recibos (admin)
+router.get('/periodos/:id/estado-cuenta', ...admin, async (req, res) => {
   try {
-    const pr = await pool.query(`SELECT * FROM agua_periodos WHERE id = $1`, [id]);
-    if (!pr.rows.length) return res.status(404).json({ success: false, error: 'Periodo no encontrado' });
-    const periodo = pr.rows[0];
-    const r = await pool.query(
-      `SELECT m.unidad, m.propietario, m.tipo, m.cobra, m.incluidos_m3, l.*
-       FROM agua_medidores m
-       LEFT JOIN agua_lecturas l ON l.medidor_id = m.id AND l.periodo_id = $1 AND l.deleted_at IS NULL
-       WHERE m.deleted_at IS NULL
-       ORDER BY m.tipo = 'casa' DESC, NULLIF(regexp_replace(m.unidad, '\\D', '', 'g'), '')::int NULLS LAST, m.unidad`, [id]
-    );
-    const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-    const nombreMes = `${MESES[periodo.mes - 1]} ${periodo.anio}`;
+    const ec = await estadoCuenta(pool, num(req.params.id));
+    if (!ec) return res.status(404).json({ success: false, error: 'Periodo no encontrado' });
+    if (ec.error) return res.status(409).json({ success: false, error: ec.error });
+    res.json({ success: true, data: ec });
+  } catch (err) { errorInterno(res, err, 'GET /periodos/:id/estado-cuenta'); }
+});
+
+// GET /api/agua/periodos/:id/export — Excel del periodo con el formato de "AA - Lectura Medidores Casas 2026 v2" (admin)
+router.get('/periodos/:id/export', ...admin, async (req, res) => {
+  try {
+    const ec = await estadoCuenta(pool, num(req.params.id));
+    if (!ec) return res.status(404).json({ success: false, error: 'Periodo no encontrado' });
+    if (ec.error) return res.status(409).json({ success: false, error: ec.error });
+    const { periodo, tarifa, filas, grupos } = ec;
+    const N = tarifa.niveles.length;
 
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet(MESES[periodo.mes - 1]);
-    ws.columns = [
-      { header: 'Unidad', key: 'unidad', width: 12 },
-      { header: 'Propietario', key: 'propietario', width: 38 },
-      { header: 'Unidad lectura', key: 'unidad_lectura', width: 10 },
-      { header: 'Lectura anterior', key: 'lectura_anterior', width: 14 },
-      { header: 'Lectura actual', key: 'lectura_actual', width: 14 },
-      { header: 'Cambio medidor', key: 'cambio', width: 10 },
-      { header: 'Consumo m³', key: 'consumo_m3', width: 12 },
-      { header: 'm³ incluidos', key: 'incluidos_m3', width: 11 },
-      { header: 'Nivel 1 m³', key: 'n1m', width: 10 }, { header: 'Nivel 2 m³', key: 'n2m', width: 10 },
-      { header: 'Nivel 3 m³', key: 'n3m', width: 10 }, { header: 'Nivel 4 m³', key: 'n4m', width: 10 },
-      { header: 'Nivel 5 m³', key: 'n5m', width: 10 },
-      { header: 'Nivel 1 USD', key: 'n1u', width: 11 }, { header: 'Nivel 2 USD', key: 'n2u', width: 11 },
-      { header: 'Nivel 3 USD', key: 'n3u', width: 11 }, { header: 'Nivel 4 USD', key: 'n4u', width: 11 },
-      { header: 'Nivel 5 USD', key: 'n5u', width: 11 },
-      { header: 'Total USD', key: 'cobro_usd', width: 12 },
-      { header: 'Estado', key: 'estado', width: 12 },
-      { header: 'Alertas', key: 'alertas', width: 24 },
-      { header: 'Nota', key: 'nota', width: 40 },
-      { header: 'Foto', key: 'foto_url', width: 18 }
+    wb.creator = 'Agua PDM';
+    const ws = wb.addWorksheet(MESES[periodo.mes - 1], { views: [{ state: 'frozen', xSplit: 2, ySplit: 4 }] });
+
+    const AZUL = 'FF10212E', GRIS = 'FFEEF2F4', AMARILLO = 'FFFFF4CC';
+    const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+    const borde = { top: { style: 'thin', color: { argb: 'FFD9E0E4' } }, bottom: { style: 'thin', color: { argb: 'FFD9E0E4' } } };
+    const rango = (n) => `${Number(n.desde)}–${n.hasta === null ? '∞' : Number(n.hasta)} m³`;
+
+    // Columnas: A..E lecturas, F..I cambio, J..L cálculo, niveles m³, niveles USD, resultado, extras
+    const cols = [
+      ['Unidad', 10], ['Propietario', 34], ['Unidad lectura', 9], ['Lectura anterior', 14], ['Lectura actual', 14],
+      ['¿Cambio de medidor?', 10], ['Lect. final medidor retirado', 14], ['Unidad medidor retirado', 10], ['Lect. inicial medidor nuevo', 12],
+      ['Consumo m³', 11], ['m³ incluidos', 10], ['Excedente m³', 11],
+      ...tarifa.niveles.map((n) => [`Nivel ${n.nivel}\n${rango(n)}`, 11]),
+      ...tarifa.niveles.map((n) => [`Nivel ${n.nivel}\n$${Number(n.precio)}/m³`, 11]),
+      ['Total USD', 12], ['Nivel', 10], ['Alerta', 26], ['Notas', 34], ['Estado', 12], ['Foto', 10]
     ];
-    ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10212E' } };
+    ws.columns = cols.map(([, width]) => ({ width }));
+    const cTotal = 12 + 2 * N + 1;
 
-    let totCasas = 0, totOtros = 0, m3Casas = 0;
-    for (const x of r.rows) {
-      const d = x.detalle_niveles || {};
-      const g = (n, k) => (d[`nivel_${n}`] ? d[`nivel_${n}`][k] : null);
-      const unidadLect = x.unidad_lectura === 'm3' ? 'm³' : x.unidad_lectura;
-      const row = ws.addRow({
-        unidad: x.unidad, propietario: x.propietario, unidad_lectura: unidadLect,
-        lectura_anterior: num(x.lectura_anterior), lectura_actual: num(x.lectura_actual),
-        cambio: x.cambio_medidor ? 'Sí' : '', consumo_m3: num(x.consumo_m3), incluidos_m3: num(x.incluidos_m3),
-        n1m: g(1, 'm3'), n2m: g(2, 'm3'), n3m: g(3, 'm3'), n4m: g(4, 'm3'), n5m: g(5, 'm3'),
-        n1u: g(1, 'usd'), n2u: g(2, 'usd'), n3u: g(3, 'usd'), n4u: g(4, 'usd'), n5u: g(5, 'usd'),
-        cobro_usd: num(x.cobro_usd), estado: x.estado || 'sin lectura',
-        alertas: x.alertas ? x.alertas.join(', ') : '', nota: x.nota || '', foto_url: x.foto_url ? 'Ver foto' : ''
-      });
-      if (x.foto_url) row.getCell('foto_url').value = { text: 'Ver foto', hyperlink: x.foto_url };
-      if (x.tipo === 'casa') { totCasas += num(x.cobro_usd) || 0; m3Casas += num(x.consumo_m3) || 0; }
-      else totOtros += num(x.cobro_usd) || 0;
+    const titulo = ws.getCell('A1');
+    titulo.value = `Lectura de medidores — ${periodo.nombre}`;
+    titulo.font = { bold: true, size: 14 };
+    ws.getCell('F1').value = ec.preliminar
+      ? 'PRELIMINAR: periodo abierto, calculado con la tarifa vigente. Los montos se fijan al cerrar el periodo.'
+      : `Periodo cerrado el ${periodo.cerrado_en ? new Date(periodo.cerrado_en).toLocaleDateString('es-MX', { timeZone: 'America/Mazatlan' }) : ''} — montos definitivos.`;
+    ws.getCell('F1').font = { bold: true, color: { argb: ec.preliminar ? 'FF7A3206' : 'FF1F5536' } };
+
+    const grupoCab = [
+      [1, 5, 'LECTURAS'], [6, 9, 'SOLO SI SE CAMBIÓ EL MEDIDOR'], [10, 12, 'CÁLCULO'],
+      [13, 12 + N, 'm³ POR NIVEL'], [13 + N, 12 + 2 * N, 'IMPORTE USD POR NIVEL'], [cTotal, cTotal + 5, 'RESULTADO']
+    ];
+    for (const [a, b, t] of grupoCab) {
+      ws.mergeCells(3, a, 3, b);
+      const c = ws.getCell(3, a);
+      c.value = t; c.font = { bold: true, size: 10, color: { argb: 'FF34444F' } }; c.fill = fill(GRIS); c.alignment = { horizontal: 'center' };
     }
-    ['n1u', 'n2u', 'n3u', 'n4u', 'n5u', 'cobro_usd'].forEach((k) => { ws.getColumn(k).numFmt = '"$"#,##0.00'; });
-    ['consumo_m3', 'n1m', 'n2m', 'n3m', 'n4m', 'n5m'].forEach((k) => { ws.getColumn(k).numFmt = '#,##0.000'; });
-    ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 1 }];
+    const cab = ws.getRow(4);
+    cab.values = cols.map(([t]) => t);
+    cab.height = 32;
+    cab.eachCell((c) => { c.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 }; c.fill = fill(AZUL); c.alignment = { wrapText: true, vertical: 'middle', horizontal: 'center' }; });
 
+    const unidadTxt = (u) => (u === 'm3' ? 'm³' : u || '');
+    const ALERTA_TXT = {
+      consumo_alto: 'Consumo alto', consumo_cero: 'Consumo cero', cambio_medidor: 'Cambio de medidor',
+      sin_qr: 'Sin QR', fuera_de_lugar: 'Fuera de lugar', falta_final_retirado: 'Falta lectura del retirado'
+    };
+    const ESTADO_TXT = { sin_lectura: 'Sin lectura', validada: 'Validada', con_alerta: 'Con alerta', aprobada: 'Aprobada', relectura: 'Relectura', cerrada: 'Cerrada' };
+
+    const filaDatos = (f) => {
+      const v = [
+        f.unidad, f.propietario, unidadTxt(f.unidad_lectura), f.lectura_anterior, f.lectura_actual,
+        f.cambio_medidor ? 'Sí' : '', f.lect_final_retirado, f.cambio_medidor ? unidadTxt(f.unidad_retirado) : '', f.lect_inicial_nuevo,
+        f.consumo_m3, f.incluidos_m3, f.excedente_m3,
+        ...f.niveles.map((n) => (f.consumo_m3 === null ? null : n.m3)),
+        ...f.niveles.map((n) => (f.consumo_m3 === null ? null : n.usd)),
+        f.consumo_m3 === null ? null : f.cobro_usd,
+        f.cobra ? (f.nivel || '') : 'No cobra',
+        f.lectura_actual === null ? 'Sin lectura' : f.alertas.map((a) => ALERTA_TXT[a] || a).join(', '),
+        f.nota || '', ESTADO_TXT[f.estado] || f.estado, ''
+      ];
+      const row = ws.addRow(v);
+      if (f.foto_url) { const c = row.getCell(cTotal + 5); c.value = { text: 'Ver foto', hyperlink: f.foto_url }; c.font = { color: { argb: 'FF0A5F8A' }, underline: true }; }
+      if (f.lectura_actual === null) row.getCell(5).fill = fill(AMARILLO);
+      if (f.alertas.length) row.getCell(cTotal + 2).font = { color: { argb: 'FF7A3206' } };
+      row.eachCell({ includeEmpty: true }, (c) => { c.border = borde; });
+      return row;
+    };
+    const filaSubtotal = (texto, g) => {
+      const row = ws.addRow([
+        texto, '', '', '', '', '', '', '', '',
+        g.consumo_m3, '', g.excedente_m3,
+        ...g.niveles.map((n) => n.m3), ...g.niveles.map((n) => n.usd),
+        g.cobro_usd, `${g.con_excedente} con excedente`, `${g.con_lectura}/${g.medidores} con lectura`, '', '', ''
+      ]);
+      row.font = { bold: true };
+      row.eachCell({ includeEmpty: true }, (c) => { c.fill = fill(GRIS); });
+      return row;
+    };
+
+    const casas = filas.filter((f) => f.tipo === 'casa');
+    const otros = filas.filter((f) => f.tipo !== 'casa');
+    casas.forEach(filaDatos);
+    filaSubtotal(`Subtotal ${casas.length} casas`, grupos.casas);
+    ws.addRow([]);
+    otros.forEach(filaDatos);
+    filaSubtotal('Subtotal albercas y otros', grupos.otros);
+    ws.addRow([]);
+    const tot = ws.addRow(['TOTAL A COBRAR']);
+    tot.getCell(10).value = redondear(grupos.casas.consumo_m3 + grupos.otros.consumo_m3);
+    tot.getCell(cTotal).value = ec.total_usd;
+    tot.font = { bold: true, size: 12 };
+
+    const fmtM3 = '#,##0.000;-#,##0.000;"-"', fmtUsd = '"$"#,##0.00;-"$"#,##0.00;"-"', fmtLect = '#,##0';
+    [4, 5, 7, 9].forEach((c) => { ws.getColumn(c).numFmt = fmtLect; });
+    for (let c = 10; c <= 12 + N; c++) ws.getColumn(c).numFmt = fmtM3;
+    for (let c = 13 + N; c <= cTotal; c++) ws.getColumn(c).numFmt = fmtUsd;
+    ws.getColumn(2).alignment = { wrapText: false };
+
+    // Hoja Tarifa (la aplicada a este periodo)
+    const tw = wb.addWorksheet('Tarifa');
+    tw.columns = [{ width: 28 }, { width: 18 }, { width: 14 }, { width: 18 }];
+    tw.addRow([ec.preliminar ? 'Tarifa vigente (preliminar)' : 'Tarifa aplicada al cierre']).font = { bold: true, size: 13 };
+    tw.addRow([]);
+    tw.addRow(['m³ incluidos por unidad / mes', Number(tarifa.incluidos_m3)]);
+    tw.addRow(['Moneda', tarifa.moneda || 'USD']);
+    tw.addRow([]);
+    const tc = tw.addRow(['Nivel', 'Desde (más de) m³', 'Hasta m³', 'Precio USD / m³']);
+    tc.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    tc.eachCell((c) => { c.fill = fill(AZUL); });
+    tarifa.niveles.forEach((n) => tw.addRow([`Nivel ${n.nivel}`, Number(n.desde), n.hasta === null ? 'Sin límite' : Number(n.hasta), Number(n.precio)]));
+    tw.getColumn(4).numFmt = '"$"#,##0.00';
+
+    // Hoja Resumen
     const rs = wb.addWorksheet('Resumen');
-    rs.columns = [{ header: 'Concepto', key: 'c', width: 40 }, { header: 'Valor', key: 'v', width: 18 }];
-    rs.getRow(1).font = { bold: true };
-    rs.addRow({ c: 'Periodo', v: nombreMes });
-    rs.addRow({ c: 'Estado', v: periodo.estado });
-    rs.addRow({ c: 'Consumo medido en casas (m³)', v: Math.round(m3Casas * 1000) / 1000 });
-    rs.addRow({ c: 'Entrada a cisterna de casas (m³)', v: num(periodo.entrada_cisterna_m3) });
-    if (num(periodo.entrada_cisterna_m3)) {
-      rs.addRow({ c: 'No contabilizado (%)', v: Math.round((1 - m3Casas / num(periodo.entrada_cisterna_m3)) * 1000) / 10 });
-    }
-    rs.addRow({ c: 'Cobro casas (USD)', v: Math.round(totCasas * 100) / 100 });
-    rs.addRow({ c: 'Cobro albercas y otros (USD)', v: Math.round(totOtros * 100) / 100 });
-    rs.addRow({ c: 'Total a cobrar (USD)', v: Math.round((totCasas + totOtros) * 100) / 100 });
+    rs.columns = [{ width: 38 }, { width: 16 }, { width: 16 }];
+    rs.addRow([`Resumen — ${periodo.nombre}`]).font = { bold: true, size: 13 };
+    rs.addRow([ec.preliminar ? 'Preliminar (periodo abierto)' : 'Definitivo (periodo cerrado)']);
+    rs.addRow([]);
+    const add = (a, b, fmt) => { const row = rs.addRow([a, b]); if (fmt) row.getCell(2).numFmt = fmt; return row; };
+    add('Medidores', ec.conteo.medidores);
+    add('Con lectura', ec.conteo.con_lectura);
+    add('Sin lectura', ec.conteo.sin_lectura);
+    add('Con alerta sin revisar', ec.conteo.con_alerta);
+    add('Relectura solicitada', ec.conteo.relectura);
+    rs.addRow([]);
+    add('Consumo casas (m³)', grupos.casas.consumo_m3, fmtM3);
+    add('Excedente casas (m³)', grupos.casas.excedente_m3, fmtM3);
+    add('Casas con excedente', grupos.casas.con_excedente);
+    add('Cobro casas (USD)', grupos.casas.cobro_usd, fmtUsd);
+    add('Cobro albercas y otros (USD)', grupos.otros.cobro_usd, fmtUsd);
+    add('TOTAL A COBRAR (USD)', ec.total_usd, fmtUsd).font = { bold: true };
+    rs.addRow([]);
+    add('Entrada a cisterna de casas (m³)', ec.balance.entrada_cisterna_m3, fmtM3);
+    add('No contabilizado (%)', ec.balance.no_contabilizado_pct);
+    rs.addRow([]);
+    const dc = rs.addRow(['Casas por nivel', 'Unidades', 'Cobro USD']);
+    dc.font = { bold: true };
+    for (const [k, d] of Object.entries(ec.distribucion)) { const row = rs.addRow([k, d.unidades, d.cobro_usd]); row.getCell(3).numFmt = fmtUsd; }
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="agua-${periodo.anio}-${String(periodo.mes).padStart(2, '0')}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="agua-${periodo.anio}-${String(periodo.mes).padStart(2, '0')}${ec.preliminar ? '-preliminar' : ''}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   } catch (err) { errorInterno(res, err, 'GET /periodos/:id/export'); }
 });
 
 module.exports = router;
-module.exports._test = { calcularConsumo, calcularCobro, evaluarAlertas, distanciaMetros };
+module.exports._test = { calcularConsumo, calcularCobro, evaluarAlertas, distanciaMetros, nivelAlcanzado };
