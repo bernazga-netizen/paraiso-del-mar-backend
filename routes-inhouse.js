@@ -4,7 +4,8 @@
 const express  = require('express');
 const router   = express.Router();
 const { Pool } = require('pg');
-const { verifyToken } = require('./middlewares/auth');
+const jwt = require('jsonwebtoken');
+const { verifyToken, JWT_SECRET } = require('./middlewares/auth');
 const authRouter = require('./routes-auth');
 const requireGerente = authRouter.requireGerente;
 const { Resend } = require('resend');
@@ -35,8 +36,9 @@ router.post('/', async (req, res) => {
       interesado_comprar = false, recibir_info = false,
       acompanantes = [],
       pdf_firmado_url, firma_imagen,
-      notas, registrado_por
+      notas
     } = req.body;
+    // registrado_por NO se toma del body (el endpoint es público y se podría falsear)
 
     // ── SEGURIDAD: validaciones de entrada ──────────────────
     if (!unidad || !nombre_huesped || !fecha_ingreso) {
@@ -65,6 +67,8 @@ router.post('/', async (req, res) => {
     }
 
     const edificio = extraerEdificio(unidad);
+    const autor = await resolverAutor(req, property_manager_id);
+    const registrado_por = autor.nombre;
     await client.query('BEGIN');
 
     const ins = await client.query(`
@@ -100,7 +104,8 @@ router.post('/', async (req, res) => {
 
     await guardarHistorial(client, {
       registro_id:    registro.id,
-      usuario_nombre: registrado_por || 'Sistema',
+      usuario_id:     autor.id,
+      usuario_nombre: registrado_por,
       accion:         'crear',
       campo:          null,
       valor_antes:    null,
@@ -343,6 +348,28 @@ async function verificarTraslape(unidad, fecha_ingreso, fecha_salida, excludeId 
     LIMIT 1
   `, params);
   return result.rows[0] || null;
+}
+
+// Quién da de alta un registro. POST /api/inhouse es público (formularios de
+// huésped), así que se decide en el servidor: si viene un token válido del
+// panel admin se usa ese usuario; si no, se etiqueta como formulario público
+// o link del Property Manager.
+async function resolverAutor(req, property_manager_id) {
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (token) {
+    try {
+      const u = jwt.verify(token, JWT_SECRET);
+      if (u && u.id && u.nombre && !u.sistema) return { id: u.id, nombre: u.nombre };
+    } catch { /* token inválido o vencido: se trata como público */ }
+  }
+  if (property_manager_id) {
+    try {
+      const { rows } = await pool.query('SELECT nombre FROM inhouse_property_managers WHERE id = $1', [property_manager_id]);
+      if (rows[0]) return { id: null, nombre: `Link PM · ${rows[0].nombre}`.substring(0, 200) };
+    } catch { /* si falla la consulta se usa la etiqueta genérica */ }
+  }
+  return { id: null, nombre: 'Formulario público' };
 }
 
 async function guardarHistorial(client, { registro_id, usuario_id, usuario_nombre, accion, campo, valor_antes, valor_despues }) {
