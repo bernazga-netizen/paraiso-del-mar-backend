@@ -419,7 +419,10 @@ router.get('/', async (req, res) => {
         r.id, r.unidad, r.edificio, r.tipo,
         r.nombre_huesped, r.email, r.telefono,
         r.fecha_ingreso, r.fecha_salida, r.num_personas,
-        r.notas, r.created_at, r.pdf_firmado_url,
+        r.notas, r.created_at,
+        -- El PDF se guarda en base64 (hasta ~5 MB por fila); en el listado solo
+        -- se indica si existe. Se descarga completo con GET /api/inhouse/:id
+        (r.pdf_firmado_url IS NOT NULL) AS tiene_pdf,
         pm.nombre AS property_manager,
         CASE
           WHEN r.fecha_ingreso > CURRENT_DATE THEN 'futuro'
