@@ -13,6 +13,8 @@ const inhouseRouter  = require('./routes-inhouse');
 const bitacorasRouter = require('./routes-bitacoras'); // ← NUEVO
 const seguridadAuthRoutes = require('./routes-seguridad-auth');
 const seguridadRoutes = require('./routes-seguridad');
+const tabletsRouter = require('./routes-tablets');
+const { verifyTablet } = tabletsRouter;
 
 const app = express();
 const server = http.createServer(app);
@@ -75,6 +77,7 @@ app.use('/api/inhouse',   inhouseRouter);
 app.use('/api/bitacoras', bitacorasRouter);
 app.use('/api/seguridad/auth', seguridadAuthRoutes);
 app.use('/api/seguridad', seguridadRoutes);
+app.use('/api/tablets', tabletsRouter);
 
 // Crear tabla de auditoría si no existe
 pool.query(`
@@ -128,8 +131,8 @@ app.get('/api/test/crear-muestra', verifyToken, async (req, res) => {
   }
 });
 
-// ── Rutas de tablets — SIN JWT (autenticación por PIN en frontend) ───────────
-app.post('/api/registros', async (req, res) => {
+// ── Rutas de tablets — requieren token de tablet (obtenido con PIN en /api/tablets/verify) ──
+app.post('/api/registros', verifyTablet, async (req, res) => {
     try {
         const { fecha, hora, acceso, tipo_persona, cantidad, embarcacion, notas, usuario_captura } = req.body;
 
